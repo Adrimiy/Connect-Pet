@@ -32,6 +32,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { HousingType, SpeciesPreference, SizePreference, AdopterProfile, GuardianProfile, CurrentUser } from "@/types";
+import { isValidPhone, validateFullName } from "@/lib/validation";
 
 const BRAZILIAN_STATES = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
@@ -151,13 +152,19 @@ function ProfileForm({ user }: { user: CurrentUser }) {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!name.trim()) {
-      showToast("Campo obrigatório", "O nome completo não pode ficar em branco.", "error");
+    const nameValidation = validateFullName(name, "Nome completo");
+    if (!nameValidation.valid) {
+      showToast("Campo obrigatório", nameValidation.error || "O nome completo não pode ficar em branco.", "error");
       return;
     }
 
-    if (!primaryPhone.trim()) {
-      showToast("Campo obrigatório", "O WhatsApp / telefone de contato é obrigatório.", "error");
+    if (!isValidPhone(primaryPhone)) {
+      showToast("Campo inválido", "WhatsApp / telefone de contato inválido. Informe o DDD e o número completo.", "error");
+      return;
+    }
+
+    if (city.trim().length < 2) {
+      showToast("Campo obrigatório", "Por favor, informe a cidade onde mora ou atua.", "error");
       return;
     }
 
@@ -207,7 +214,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
   const age = birthDate ? calculateAge(birthDate) : null;
 
   return (
-    <div className="min-h-screen bg-slate-50/50 dark:bg-[#080E1A] py-8 sm:py-12 transition-colors">
+    <div className="min-h-screen bg-background py-8 sm:py-12 transition-colors">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 max-w-4xl space-y-8">
 
         {/* Barra de Navegação Superior / Voltar */}
@@ -340,6 +347,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                 <Input
                   id="name"
                   type="text"
+                  maxLength={100}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Seu nome completo"
@@ -376,6 +384,8 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                   <Input
                     id="phone"
                     type="tel"
+                    inputMode="tel"
+                    maxLength={15}
                     value={primaryPhone}
                     onChange={(e) => handlePhoneChange(e.target.value)}
                     placeholder="(11) 99999-9999"
@@ -446,6 +456,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                     <Input
                       id="profession"
                       type="text"
+                      maxLength={80}
                       value={profession}
                       onChange={(e) => setProfession(e.target.value)}
                       placeholder="Ex: Engenheira, Designer, Professor..."
@@ -466,6 +477,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                   <Input
                     id="socialMedia"
                     type="text"
+                    maxLength={80}
                     value={socialMedia}
                     onChange={(e) => setSocialMedia(e.target.value)}
                     placeholder="Ex: @seu_usuario ou link do perfil"
@@ -499,6 +511,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                   <Input
                     id="responsible"
                     type="text"
+                    maxLength={100}
                     value={responsibleName}
                     onChange={(e) => setResponsibleName(e.target.value)}
                     placeholder="Nome da pessoa responsável pela entidade"
@@ -543,6 +556,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                       <Input
                         id="city"
                         type="text"
+                        maxLength={60}
                         value={city}
                         onChange={(e) => setCity(e.target.value)}
                         placeholder="Ex: São Paulo, Campinas, Curitiba..."
@@ -657,6 +671,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                     {hasOtherPets && (
                       <Input
                         type="text"
+                        maxLength={300}
                         value={otherPetsDetails}
                         onChange={(e) => setOtherPetsDetails(e.target.value)}
                         placeholder="Ex: 1 cão castrado e 1 gata de 4 anos"
@@ -787,6 +802,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                   <Input
                     id="city"
                     type="text"
+                    maxLength={60}
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
                     className="rounded-xl border-border bg-background"
@@ -812,6 +828,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                   <Input
                     id="neighborhood"
                     type="text"
+                    maxLength={60}
                     value={neighborhood}
                     onChange={(e) => setNeighborhood(e.target.value)}
                     className="rounded-xl border-border bg-background min-h-[44px]"
@@ -819,11 +836,15 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                 </div>
 
                 <div className="sm:col-span-3 space-y-2">
-                  <Label htmlFor="desc" className="text-xs font-bold text-foreground">Apresentação / Missão da ONG</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="desc" className="text-xs font-bold text-foreground">Apresentação / Missão da ONG</Label>
+                    <span className="text-[11px] text-muted-foreground">{bio.length}/500 caracteres</span>
+                  </div>
                   <Textarea
                     id="desc"
+                    maxLength={500}
                     value={bio}
-                    onChange={(e) => setBio(e.target.value)}
+                    onChange={(e) => setBio(e.target.value.slice(0, 500))}
                     rows={3}
                     placeholder="Conte sobre a missão da ONG, anos de atuação e histórico de resgates..."
                     className="rounded-2xl border-border bg-background"

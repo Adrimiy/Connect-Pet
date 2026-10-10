@@ -23,84 +23,19 @@ import {
   Calendar
 } from "lucide-react";
 
-// ============================================================================
-// Helpers de Validação e Formatação
-// ============================================================================
-
-function formatCPF(value: string): string {
-  const digits = value.replace(/\D/g, "").slice(0, 11);
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
-  if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
-  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
-}
-
-function formatPhone(value: string): string {
-  const digits = value.replace(/\D/g, "").slice(0, 11);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
-  if (digits.length <= 10) {
-    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
-  }
-  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
-}
-
-function isValidCPF(cpf: string): boolean {
-  const clean = cpf.replace(/\D/g, "");
-  if (clean.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(clean)) return false;
-
-  let sum = 0;
-  for (let i = 0; i < 9; i++) {
-    sum += parseInt(clean.charAt(i), 10) * (10 - i);
-  }
-  let rev = 11 - (sum % 11);
-  if (rev === 10 || rev === 11) rev = 0;
-  if (rev !== parseInt(clean.charAt(9), 10)) return false;
-
-  sum = 0;
-  for (let i = 0; i < 10; i++) {
-    sum += parseInt(clean.charAt(i), 10) * (11 - i);
-  }
-  rev = 11 - (sum % 11);
-  if (rev === 10 || rev === 11) rev = 0;
-  return rev === parseInt(clean.charAt(10), 10);
-}
-
-function isValidBirthDate(dateStr: string): { valid: boolean; error?: string } {
-  if (!dateStr) return { valid: false, error: "Data de nascimento é obrigatória." };
-  const birth = new Date(dateStr + "T00:00:00");
-  if (isNaN(birth.getTime())) return { valid: false, error: "Data de nascimento inválida." };
-
-  const today = new Date();
-  if (birth > today) return { valid: false, error: "A data de nascimento não pode estar no futuro." };
-
-  let age = today.getFullYear() - birth.getFullYear();
-  const m = today.getMonth() - birth.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
-    age--;
-  }
-
-  if (age < 18) {
-    return { valid: false, error: "É necessário ter no mínimo 18 anos para se cadastrar." };
-  }
-  if (age > 120) {
-    return { valid: false, error: "Data de nascimento inválida." };
-  }
-
-  return { valid: true };
-}
-
-function isValidPhone(phone: string): boolean {
-  const digits = phone.replace(/\D/g, "");
-  if (digits.length < 10 || digits.length > 11) return false;
-  const ddd = parseInt(digits.slice(0, 2), 10);
-  return ddd >= 11 && ddd <= 99;
-}
-
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-}
+import {
+  formatCPF,
+  formatCNPJ,
+  formatPhone,
+  isValidCPF,
+  isValidCNPJ,
+  isValidBirthDate,
+  isValidPhone,
+  isValidEmail,
+  validateCNPJ,
+  validateCPF,
+  validateFullName
+} from "@/lib/validation";
 
 export function RegisterView() {
   const router = useRouter();
@@ -153,8 +88,9 @@ export function RegisterView() {
 
       // Validação detalhada dos campos para o perfil Adotante
       if (isAdopterRole) {
-        if (!adopterName.trim() || adopterName.trim().length < 3 || adopterName.trim().split(/\s+/).length < 2) {
-          const msg = "Por favor, informe seu nome completo (nome e sobrenome).";
+        const nameValidation = validateFullName(adopterName, "Nome completo");
+        if (!nameValidation.valid) {
+          const msg = nameValidation.error || "Por favor, informe seu nome completo (nome e sobrenome).";
           setErrorMessage(msg);
           showToast("Atenção", msg, "warning");
           isSubmittingRef.current = false;
@@ -172,8 +108,9 @@ export function RegisterView() {
           return;
         }
 
-        if (!isValidCPF(adopterCpf)) {
-          const msg = "CPF inválido. Por favor, confira os números digitados.";
+        const cpfValidation = validateCPF(adopterCpf);
+        if (!cpfValidation.valid) {
+          const msg = cpfValidation.error || "CPF inválido. Por favor, confira os números digitados.";
           setErrorMessage(msg);
           showToast("Atenção", msg, "warning");
           isSubmittingRef.current = false;
@@ -190,8 +127,9 @@ export function RegisterView() {
           return;
         }
 
-        if (!isValidPhone(adopterPhone)) {
-          const msg = "WhatsApp/Celular inválido. Informe o DDD e o número completo.";
+        const phoneValidation = isValidPhone(adopterPhone);
+        if (!phoneValidation) {
+          const msg = "WhatsApp/Celular inválido. Informe o DDD e o número completo (9 dígitos).";
           setErrorMessage(msg);
           showToast("Atenção", msg, "warning");
           isSubmittingRef.current = false;
@@ -217,9 +155,37 @@ export function RegisterView() {
           return;
         }
       } else {
-        // Validações básicas para Guardião / ONG
-        if (!targetEmail || !targetPassword) {
-          const msg = "Por favor, preencha todos os campos obrigatórios.";
+        // Validações robustas para Guardião / ONG / Doador
+        if (!ngoName.trim() || ngoName.trim().length < 3) {
+          const msg = "Por favor, informe o nome da ONG ou Instituição (mínimo 3 caracteres).";
+          setErrorMessage(msg);
+          showToast("Atenção", msg, "warning");
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
+          return;
+        }
+
+        const cnpjValidation = validateCNPJ(ngoDocument);
+        if (!cnpjValidation.valid) {
+          const msg = cnpjValidation.error || "CNPJ inválido. Verifique os números digitados.";
+          setErrorMessage(msg);
+          showToast("Atenção", msg, "warning");
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (!ngoCity.trim() || ngoCity.trim().length < 2) {
+          const msg = "Por favor, informe a cidade de atuação.";
+          setErrorMessage(msg);
+          showToast("Atenção", msg, "warning");
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (!isValidEmail(targetEmail)) {
+          const msg = "Por favor, informe um endereço de e-mail institucional válido.";
           setErrorMessage(msg);
           showToast("Atenção", msg, "warning");
           isSubmittingRef.current = false;
@@ -427,10 +393,12 @@ export function RegisterView() {
                   <input
                     type="text"
                     required
+                    maxLength={100}
+                    autoComplete="name"
                     value={adopterName}
                     onChange={(e) => setAdopterName(e.target.value)}
                     placeholder="Ex: Mariana da Silva Sauro"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -444,30 +412,56 @@ export function RegisterView() {
                     <input
                       type="date"
                       required
+                      min="1900-01-01"
+                      max={new Date().toISOString().split("T")[0]}
                       value={adopterBirthDate}
                       onChange={(e) => setAdopterBirthDate(e.target.value)}
-                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs"
+                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    Definida uma única vez no cadastro; não poderá ser alterada no dossiê de adoção.
+                    Exigido mínimo de 18 anos completos para cadastro.
                   </p>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="font-bold text-foreground">CPF *</label>
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-foreground">CPF *</label>
+                    {adopterCpf && (
+                      <span className={`text-[10px] font-medium ${
+                        isValidCPF(adopterCpf)
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : adopterCpf.replace(/\D/g, "").length === 11
+                          ? "text-rose-500"
+                          : "text-muted-foreground"
+                      }`}>
+                        {adopterCpf.replace(/\D/g, "").length}/11 dígitos
+                      </span>
+                    )}
+                  </div>
                   <div className="relative">
                     <FileText className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       required
+                      inputMode="numeric"
                       maxLength={14}
                       value={adopterCpf}
                       onChange={(e) => setAdopterCpf(formatCPF(e.target.value))}
                       placeholder="000.000.000-00"
-                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs"
+                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
+                  {adopterCpf.replace(/\D/g, "").length > 0 && adopterCpf.replace(/\D/g, "").length < 11 && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                      CPF incompleto (informe os 11 dígitos).
+                    </p>
+                  )}
+                  {adopterCpf.replace(/\D/g, "").length === 11 && !isValidCPF(adopterCpf) && (
+                    <p className="text-[10px] text-rose-500 dark:text-rose-400">
+                      CPF inválido. Verifique os dígitos verificadores.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -480,10 +474,11 @@ export function RegisterView() {
                     <input
                       type="text"
                       required
+                      maxLength={80}
                       value={adopterProfession}
                       onChange={(e) => setAdopterProfession(e.target.value)}
                       placeholder="Ex: Designer, Engenheiro"
-                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs"
+                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
                 </div>
@@ -495,11 +490,12 @@ export function RegisterView() {
                     <input
                       type="tel"
                       required
+                      inputMode="tel"
                       maxLength={15}
                       value={adopterPhone}
                       onChange={(e) => setAdopterPhone(formatPhone(e.target.value))}
                       placeholder="(11) 98765-4321"
-                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs"
+                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
                 </div>
@@ -515,10 +511,11 @@ export function RegisterView() {
                   <AtSign className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
+                    maxLength={80}
                     value={adopterSocialMedia}
                     onChange={(e) => setAdopterSocialMedia(e.target.value)}
                     placeholder="@instagram ou linkedin.com/in/perfil"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -531,10 +528,12 @@ export function RegisterView() {
                   <input
                     type="email"
                     required
+                    maxLength={100}
+                    autoComplete="email"
                     value={adopterEmail}
                     onChange={(e) => setAdopterEmail(e.target.value)}
                     placeholder="seu.email@exemplo.com"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -547,10 +546,13 @@ export function RegisterView() {
                   <input
                     type="password"
                     required
+                    minLength={6}
+                    maxLength={64}
+                    autoComplete="new-password"
                     value={adopterPassword}
                     onChange={(e) => setAdopterPassword(e.target.value)}
                     placeholder="Mínimo 6 caracteres"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -564,28 +566,60 @@ export function RegisterView() {
                   <input
                     type="text"
                     required
+                    maxLength={100}
                     value={ngoName}
                     onChange={(e) => setNgoName(e.target.value)}
                     placeholder="Nome da organização"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="font-bold text-foreground">CNPJ ou CPF do Responsável *</label>
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="ngo-cnpj-field" className="font-bold text-foreground">CNPJ da Instituição / Doador *</label>
+                    {ngoDocument && (
+                      <span className={`text-[10px] font-medium ${
+                        isValidCNPJ(ngoDocument)
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : ngoDocument.replace(/\D/g, "").length === 14
+                          ? "text-rose-500"
+                          : "text-muted-foreground"
+                      }`}>
+                        {ngoDocument.replace(/\D/g, "").length}/14 dígitos
+                      </span>
+                    )}
+                  </div>
                   <div className="relative">
                     <FileText className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
+                      id="ngo-cnpj-field"
                       type="text"
                       required
+                      inputMode="numeric"
+                      maxLength={18}
                       value={ngoDocument}
-                      onChange={(e) => setNgoDocument(e.target.value)}
+                      onChange={(e) => setNgoDocument(formatCNPJ(e.target.value))}
                       placeholder="00.000.000/0001-00"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
+                  {ngoDocument.replace(/\D/g, "").length > 0 && ngoDocument.replace(/\D/g, "").length < 14 && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                      CNPJ incompleto (informe os 14 dígitos).
+                    </p>
+                  )}
+                  {ngoDocument.replace(/\D/g, "").length === 14 && !isValidCNPJ(ngoDocument) && (
+                    <p className="text-[10px] text-rose-500 dark:text-rose-400">
+                      CNPJ inválido. Verifique os dígitos verificadores informados.
+                    </p>
+                  )}
+                  {isValidCNPJ(ngoDocument) && (
+                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                      ✓ CNPJ matematicamente válido.
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-1">
@@ -595,10 +629,11 @@ export function RegisterView() {
                     <input
                       type="text"
                       required
+                      maxLength={60}
                       value={ngoCity}
                       onChange={(e) => setNgoCity(e.target.value)}
                       placeholder="São Paulo"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
                 </div>
@@ -611,10 +646,12 @@ export function RegisterView() {
                   <input
                     type="email"
                     required
+                    maxLength={100}
+                    autoComplete="email"
                     value={ngoEmail}
                     onChange={(e) => setNgoEmail(e.target.value)}
                     placeholder="contato@ong.org"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -626,10 +663,13 @@ export function RegisterView() {
                   <input
                     type="password"
                     required
+                    minLength={6}
+                    maxLength={64}
+                    autoComplete="new-password"
                     value={ngoPassword}
                     onChange={(e) => setNgoPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>

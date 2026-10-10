@@ -21,7 +21,7 @@ export function HomeView() {
   const dynamicPets = pets.slice(0, 5);
 
   return (
-    <div className="flex flex-col min-h-screen bg-white dark:bg-[#080E1A] text-slate-800 dark:text-slate-100 font-sans overflow-x-hidden selection:bg-sky-200 dark:selection:bg-sky-900 selection:text-sky-900 dark:selection:text-sky-100 transition-colors duration-300">
+    <div className="flex flex-col min-h-screen bg-background text-foreground font-sans overflow-x-hidden selection:bg-sky-200 dark:selection:bg-sky-900 selection:text-sky-900 dark:selection:text-sky-100 transition-colors duration-300">
 
       {/* ========================================================================= */}
       {/* 1. SEÇÃO HERO (AZUL-CLARA COM ANIMAIS NAS LATERAIS E DIVISÃO EM ONDA)     */}
@@ -111,7 +111,7 @@ export function HomeView() {
             viewBox="0 0 1440 120"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
-            className="w-full h-10 sm:h-14 md:h-24 lg:h-28 text-white dark:text-[#080E1A] fill-current block transition-colors duration-300"
+            className="w-full h-10 sm:h-14 md:h-24 lg:h-28 text-background fill-current block transition-colors duration-300"
             preserveAspectRatio="none"
           >
             <path d="M0,32 C280,105 480,15 760,65 C1040,115 1280,25 1440,45 L1440,120 L0,120 Z" />
@@ -122,7 +122,7 @@ export function HomeView() {
       {/* ========================================================================= */}
       {/* 2. CARDS DE AÇÕES COM ANIMAIS NO TOPO                                    */}
       {/* ========================================================================= */}
-      <section className="relative w-full bg-white dark:bg-[#080E1A] pt-4 pb-16 sm:pb-20 transition-colors duration-300">
+      <section className="relative w-full bg-background pt-4 pb-16 sm:pb-20 transition-colors duration-300">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 max-w-7xl">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-16 sm:gap-y-20 pt-10 sm:pt-14">
 
@@ -287,7 +287,7 @@ export function HomeView() {
       {/* ========================================================================= */}
       {/* 3. SEÇÃO: OS 3 PILARES DA ADOÇÃO NO CONNECTPET                            */}
       {/* ========================================================================= */}
-      <section id="como-funciona" className="relative w-full bg-white dark:bg-[#080E1A] py-12 sm:py-16 overflow-hidden transition-colors duration-300">
+      <section id="como-funciona" className="relative w-full bg-background py-12 sm:py-16 overflow-hidden transition-colors duration-300">
         <div className="container mx-auto px-4 sm:px-6 max-w-5xl text-center">
 
           {/* Título Estilizado em Azul Celeste */}
@@ -460,7 +460,7 @@ export function HomeView() {
             viewBox="0 0 1440 120"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
-            className="w-full h-12 sm:h-20 md:h-28 text-white dark:text-[#080E1A] fill-current block transition-colors duration-300"
+            className="w-full h-12 sm:h-20 md:h-28 text-background fill-current block transition-colors duration-300"
             preserveAspectRatio="none"
           >
             <path d="M 0,0 L 1440,0 L 1440,30 C 1370,90 1290,115 1200,115 C 1110,115 1030,90 960,25 C 890,90 810,120 720,120 C 630,120 550,90 480,25 C 410,90 330,115 240,115 C 150,115 70,90 0,30 Z" />
@@ -489,7 +489,7 @@ export function HomeView() {
             viewBox="0 0 1440 90"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
-            className="w-full h-12 sm:h-20 md:h-28 text-white dark:text-[#080E1A] fill-current block transition-colors duration-300"
+            className="w-full h-12 sm:h-20 md:h-28 text-background fill-current block transition-colors duration-300"
             preserveAspectRatio="none"
           >
             <path d="M0,45 C280,0 520,85 860,35 C1180,0 1360,70 1440,50 L1440,90 L0,90 Z" />
@@ -500,7 +500,7 @@ export function HomeView() {
       {/* ========================================================================= */}
       {/* 5. SEÇÃO: CATÁLOGO DINÂMICO DE ANIMAIS (SUPABASE)                         */}
       {/* ========================================================================= */}
-      <section className="relative w-full bg-white dark:bg-[#080E1A] pt-4 pb-16 sm:pb-24 transition-colors duration-300">
+      <section className="relative w-full bg-background pt-4 pb-16 sm:pb-24 transition-colors duration-300">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 max-w-7xl">
 
           {/* Grade com Cards de Pets Reais (Consumidos do Supabase / AppContext) */}

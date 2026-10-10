@@ -17,6 +17,7 @@ import {
 } from '../types';
 import { mockPets as initialMockPets, demoAdopter } from '../data/mockPets';
 import { createClient } from '@/lib/client';
+import { removerFotosDoStorage } from '@/lib/petPhotos';
 import type { AuthFeature, AuthPromptState } from '@/components/auth/auth-features';
 
 export interface ToastItem {
@@ -160,6 +161,11 @@ function cleanAvatar(val: unknown): string | undefined {
 async function fetchUserProfile(supabaseClient: ReturnType<typeof createClient>, sessionUser: SupabaseUser): Promise<CurrentUser> {
   const meta = (sessionUser.user_metadata || {}) as Record<string, unknown>;
   const isGuardian = meta.role === 'guardian';
+
+  // Se houver resquício de avatar em base64 no metadata do Auth, limpa em background para diminuir os cookies JWT
+  if (typeof meta.avatar === 'string' && meta.avatar.startsWith('data:')) {
+    supabaseClient.auth.updateUser({ data: { avatar: null } }).catch(() => {});
+  }
 
   try {
     const { data: profile, error } = await supabaseClient
@@ -529,10 +535,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             })
           );
 
-          setPetsState(mappedPets);
-          try {
-            localStorage.setItem(STORAGE_KEYS.PETS, JSON.stringify(mappedPets));
-          } catch { }
+          // Mantém pets criados apenas localmente (cadastro não aceito pelo banco) para não sumirem ao recarregar
+          setPetsState((prev) => {
+            const remoteIds = new Set(mappedPets.map((p) => p.id));
+            const locais = prev.filter((p) => /^pet-\d{13}$/.test(p.id) && !remoteIds.has(p.id));
+            const merged = [...locais, ...mappedPets];
+            try {
+              localStorage.setItem(STORAGE_KEYS.PETS, JSON.stringify(merged));
+            } catch { }
+            return merged;
+          });
         }
 
         // 2. Fetch Applications with joined pets and messages
@@ -769,11 +781,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     if (supabase) {
       try {
+        // Envia apenas metadados leves ao auth para evitar inflar o token JWT nos cookies (prevenindo erro HTTP 431)
+        const safeAuthData: Record<string, unknown> = {
+          name: updatedUser.name,
+          role: updatedUser.role
+        };
+        // Apenas URLs remotas leves são gravadas em metadados do Auth, nunca Base64 (data:image/...)
+        if (newAvatar && (newAvatar.startsWith("http://") || newAvatar.startsWith("https://"))) {
+          safeAuthData.avatar = newAvatar;
+        } else {
+          safeAuthData.avatar = null;
+        }
+
         await supabase.auth.updateUser({
-          data: {
-            ...updates,
-            avatar: newAvatar || null
-          }
+          data: safeAuthData
         });
 
         const dbUpdates: Record<string, unknown> = {
@@ -874,6 +895,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
           if (error) {
             console.warn('Supabase pet insert failed, kept in localStorage:', error.message);
+            // Evita fotos órfãs no Storage quando o cadastro não foi persistido
+            await removerFotosDoStorage(supabase, newPet.photos);
+            showToast(
+              'Cadastro salvo só neste navegador',
+              'Não foi possível gravar no banco. Entre com uma conta real de ONG/Protetor para publicar o animal de verdade.',
+              'warning'
+            );
           } else if (data && data[0]) {
             const created = data[0];
             setPetsState((prev) =>
@@ -882,6 +910,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }
         } catch (err) {
           console.warn('Supabase pet insert error:', err);
+          await removerFotosDoStorage(supabase, newPet.photos);
         }
       })();
     }
@@ -890,6 +919,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [showToast, supabase]);
 
   const updatePet = useCallback((id: string, updates: Partial<Pet>) => {
+    const fotosAnteriores = pets.find((p) => p.id === id)?.photos ?? [];
+
     setPetsState((prev) => {
       const updated = prev.map((p) => (p.id === id ? { ...p, ...updates } : p));
       try {
@@ -903,9 +934,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         try {
           const remoteUpdates: Record<string, unknown> = {};
           if (updates.name !== undefined) remoteUpdates.name = updates.name;
+          if (updates.species !== undefined) remoteUpdates.species = updates.species;
+          if (updates.breed !== undefined) remoteUpdates.breed = updates.breed;
+          if (updates.size !== undefined) remoteUpdates.size = updates.size;
+          if (updates.approximateAge !== undefined) remoteUpdates.approximate_age = updates.approximateAge;
+          if (updates.ageCategory !== undefined) remoteUpdates.age_category = updates.ageCategory;
+          if (updates.sex !== undefined) remoteUpdates.sex = updates.sex;
           if (updates.status !== undefined) remoteUpdates.status = updates.status;
           if (updates.story !== undefined) remoteUpdates.story = updates.story;
           if (updates.headline !== undefined) remoteUpdates.headline = updates.headline;
+          if (updates.temperament !== undefined) remoteUpdates.temperament = updates.temperament;
+          if (updates.temperamentDescription !== undefined) remoteUpdates.temperament_description = updates.temperamentDescription;
+          if (updates.vaccinationDetails !== undefined) remoteUpdates.vaccination_details = updates.vaccinationDetails;
+          if (updates.specialNeeds !== undefined) remoteUpdates.special_needs = updates.specialNeeds;
           if (updates.photos !== undefined) remoteUpdates.photos = updates.photos;
           if (updates.vaccinated !== undefined) remoteUpdates.vaccinated = updates.vaccinated;
           if (updates.castrated !== undefined) remoteUpdates.castrated = updates.castrated;
@@ -917,6 +958,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               .update(remoteUpdates)
               .eq('id', id);
             if (error) console.warn('Supabase pet update failed:', error.message);
+
+            if (updates.photos !== undefined) {
+              const novas = updates.photos;
+              // Sucesso: remove do Storage as fotos que saíram. Falha: descarta as recém-enviadas.
+              const descartar = error
+                ? novas.filter((url) => !fotosAnteriores.includes(url))
+                : fotosAnteriores.filter((url) => !novas.includes(url));
+              await removerFotosDoStorage(supabase, descartar);
+            }
           }
         } catch (err) {
           console.warn('Supabase pet update error:', err);
@@ -925,7 +975,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     showToast('Pet atualizado', 'As alterações foram salvas com sucesso.', 'success');
-  }, [showToast, supabase]);
+  }, [pets, showToast, supabase]);
 
   const deletePet = useCallback((id: string) => {
     const petToDelete = pets.find((p) => p.id === id);
@@ -943,7 +993,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       (async () => {
         try {
           const { error } = await supabase.from('pets').delete().eq('id', id);
-          if (error) console.warn('Supabase pet delete failed:', error.message);
+          if (error) {
+            console.warn('Supabase pet delete failed:', error.message);
+          } else if (petToDelete) {
+            await removerFotosDoStorage(supabase, petToDelete.photos);
+          }
         } catch (err) {
           console.warn('Supabase pet delete error:', err);
         }
@@ -1426,24 +1480,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             .update({ status })
             .eq('id', appId);
           if (error) console.warn('Supabase app status update note:', error.message);
-
-          const statusLabels: Record<ApplicationStatus, string> = {
-            pending: 'Pendente',
-            under_review: 'Em Avaliação',
-            approved: 'Aprovada',
-            rejected: 'Não Aprovada',
-            completed: 'Adoção Concluída'
-          };
-
-          await supabase
-            .from('application_messages')
-            .insert({
-              application_id: appId,
-              sender_id: 'system',
-              sender_name: 'Sistema ConnectPet',
-              sender_role: 'system',
-              message: `Status da candidatura alterado para: ${statusLabels[status]}.`
-            });
+          // A mensagem de sistema é gravada pelo trigger do banco (ver schema.sql, seção 10.5)
         } catch (err) {
           console.warn('Supabase app status update error:', err);
         }

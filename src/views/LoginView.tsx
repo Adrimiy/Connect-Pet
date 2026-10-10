@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/client";
+import { isValidEmail } from "@/lib/validation";
 import {
   PawPrint,
   UserCheck,
@@ -76,6 +77,13 @@ export function LoginView() {
 
       if (!targetEmail || !targetPassword) {
         setErrorMessage("Por favor, preencha o e-mail e a senha.");
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (!isValidEmail(targetEmail)) {
+        setErrorMessage("Por favor, informe um endereço de e-mail válido.");
         isSubmittingRef.current = false;
         setIsSubmitting(false);
         return;
@@ -201,6 +209,8 @@ export function LoginView() {
               <input
                 type="email"
                 required
+                maxLength={100}
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="seu.email@exemplo.com"
@@ -216,6 +226,8 @@ export function LoginView() {
               <input
                 type="password"
                 required
+                maxLength={64}
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"

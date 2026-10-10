@@ -28,8 +28,12 @@ import {
   ShieldCheck,
   Sparkles,
   Building2,
-  X
+  X,
+  Loader2,
+  AlertCircle
 } from "lucide-react";
+import { PetPhotoUploader } from "@/components/pets/PetPhotoUploader";
+import { FotoPet, enviarFotosPet } from "@/lib/petPhotos";
 
 export function GuardianDashboardView() {
   const {
@@ -101,12 +105,21 @@ export function GuardianDashboardView() {
     dewormed: true,
     vaccinationDetails: "Vacinas V10 e Raiva em dia.",
     specialNeeds: "",
-    photos: "https://images.unsplash.com/photo-1543466835-00a7907e9de1?q=80&w=1000&auto=format&fit=crop",
     headline: "Companheiro alegre e cheio de energia para brincar.",
     story: "Resgatado de situação de risco, recebeu todos os tratamentos veterinários e agora busca uma família definitiva.",
     temperament: "Dócil, Brincalhão, Sociável",
     temperamentDescription: "Convive bem com outros animais e adora pessoas."
   });
+  const [newPetFotos, setNewPetFotos] = useState<FotoPet[]>([]);
+  const [isSavingPet, setIsSavingPet] = useState(false);
+  const [newPetFotosError, setNewPetFotosError] = useState<string | null>(null);
+
+  const closeAddPetModal = () => {
+    if (isSavingPet) return;
+    setIsAddPetModalOpen(false);
+    setNewPetFotos([]);
+    setNewPetFotosError(null);
+  };
 
   // Filtered animals
   const filteredPets = guardianPets.filter((p) =>
@@ -136,17 +149,24 @@ export function GuardianDashboardView() {
     showToast("Anotação Salva", "Anotações internas atualizadas com sucesso.", "success");
   };
 
-  const handleCreatePet = (e: React.FormEvent) => {
+  const handleCreatePet = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingPet) return;
     if (!newPetForm.name.trim()) {
       showToast("Atenção", "Preencha o nome do animal.", "warning");
       return;
     }
 
-    const photoList = newPetForm.photos
-      .split("\n")
-      .map((url) => url.trim())
-      .filter((url) => url.length > 0);
+    setNewPetFotosError(null);
+    setIsSavingPet(true);
+    let photoList: string[];
+    try {
+      photoList = await enviarFotosPet(newPetFotos, setNewPetFotos);
+    } catch (err) {
+      setNewPetFotosError(err instanceof Error ? err.message : "Não foi possível enviar as fotos.");
+      setIsSavingPet(false);
+      return;
+    }
 
     const temperamentTags = newPetForm.temperament
       .split(",")
@@ -186,7 +206,9 @@ export function GuardianDashboardView() {
       }
     });
 
+    setIsSavingPet(false);
     setIsAddPetModalOpen(false);
+    setNewPetFotos([]);
   };
 
   if (!currentUser) {
@@ -767,7 +789,8 @@ export function GuardianDashboardView() {
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <h3 className="font-serif text-2xl font-bold text-foreground">Cadastrar Novo Pet</h3>
               <button
-                onClick={() => setIsAddPetModalOpen(false)}
+                onClick={closeAddPetModal}
+                disabled={isSavingPet}
                 className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full hover:bg-secondary text-muted-foreground"
                 aria-label="Fechar cadastro"
               >
@@ -896,15 +919,18 @@ export function GuardianDashboardView() {
                 </label>
               </div>
 
-              <div className="space-y-1">
-                <label className="font-bold text-foreground">URL das Fotos (uma por linha)</label>
-                <textarea
-                  rows={2}
-                  value={newPetForm.photos}
-                  onChange={(e) => setNewPetForm({ ...newPetForm, photos: e.target.value })}
-                  placeholder="https://images.unsplash.com/..."
-                  className="w-full px-3 py-2 rounded-xl border border-border bg-background text-xs"
-                />
+              <div className="space-y-2">
+                <label className="font-bold text-foreground">Fotos do Animal</label>
+                <PetPhotoUploader fotos={newPetFotos} onChange={setNewPetFotos} disabled={isSavingPet} />
+                {newPetFotosError && (
+                  <div
+                    role="alert"
+                    className="flex gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300"
+                  >
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span className="min-w-0 break-words">{newPetFotosError}</span>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -942,13 +968,20 @@ export function GuardianDashboardView() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setIsAddPetModalOpen(false)}
+                  disabled={isSavingPet}
+                  onClick={closeAddPetModal}
                   className="rounded-full min-h-[44px]"
                 >
                   Cancelar
                 </Button>
-                <Button type="submit" className="rounded-full bg-primary hover:bg-primary/90 min-h-[44px]">
-                  Salvar e Publicar
+                <Button type="submit" disabled={isSavingPet} className="rounded-full bg-primary hover:bg-primary/90 min-h-[44px]">
+                  {isSavingPet ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Salvando...
+                    </>
+                  ) : (
+                    "Salvar e Publicar"
+                  )}
                 </Button>
               </div>
             </form>

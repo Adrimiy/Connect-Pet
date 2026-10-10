@@ -6,13 +6,13 @@ export function Footer() {
   return (
     <footer className="w-full bg-[#AEE0FF] text-slate-800 transition-colors duration-300 overflow-hidden">
       
-      {/* Onda Superior Suave em Azul-Claro conectando ao fundo da página (seja branco ou escuro #080E1A) */}
-      <div className="w-full overflow-hidden leading-none">
+      {/* Onda Superior Suave em Azul-Claro conectando com precisão absoluta ao fundo da página */}
+      <div className="w-full overflow-hidden leading-none -mt-px">
         <svg
           viewBox="0 0 1440 60"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
-          className="w-full h-8 sm:h-12 text-white dark:text-[#080E1A] fill-current block transition-colors duration-300"
+          className="w-full h-8 sm:h-12 text-background fill-current block transition-colors duration-300"
           preserveAspectRatio="none"
         >
           <path d="M0,0 L1440,0 L1440,25 C1100,55 860,10 520,40 C240,65 80,20 0,35 Z" />

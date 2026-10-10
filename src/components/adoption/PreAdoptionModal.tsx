@@ -18,6 +18,15 @@ import {
   FileCheck2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  formatCPF,
+  isValidCPF,
+  formatPhone,
+  isValidPhone,
+  isValidEmail,
+  formatRG,
+  validateFullName
+} from "@/lib/validation";
 
 interface PreAdoptionModalProps {
   pet: Pet;
@@ -101,10 +110,11 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
       return;
     }
 
-    // Step 1 validation: Name, birthdate, 21+ rule, phone
+    // Step 1 validation: Name, birthdate, 21+ rule, phone, email, CPF
     if (step === 1) {
-      if (!formData.name.trim()) {
-        setValidationError("Por favor, informe seu nome completo.");
+      const nameValidation = validateFullName(formData.name, "Nome completo");
+      if (!nameValidation.valid) {
+        setValidationError(nameValidation.error || "Por favor, informe seu nome completo (nome e sobrenome).");
         return;
       }
       if (!candidateBirthDate) {
@@ -117,8 +127,16 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
         );
         return;
       }
-      if (!formData.primaryPhone.trim()) {
-        setValidationError("Informe seu número de WhatsApp / telefone de contato.");
+      if (!isValidPhone(formData.primaryPhone)) {
+        setValidationError("Informe um número de WhatsApp/Telefone válido com DDD e dígitos completos.");
+        return;
+      }
+      if (formData.email.trim() && !isValidEmail(formData.email)) {
+        setValidationError("O endereço de e-mail informado é inválido. Por favor, confira o formato.");
+        return;
+      }
+      if (formData.cpf.trim() && !isValidCPF(formData.cpf)) {
+        setValidationError("O CPF informado é inválido. Verifique os números digitados.");
         return;
       }
       setStep(2);
@@ -309,6 +327,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   <label className="text-xs font-bold text-foreground">Nome Completo *</label>
                   <input
                     type="text"
+                    maxLength={100}
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     placeholder="Seu nome completo"
@@ -358,6 +377,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   <label className="text-xs font-bold text-foreground">Profissão / Ocupação</label>
                   <input
                     type="text"
+                    maxLength={80}
                     value={formData.profession}
                     onChange={(e) => setFormData({ ...formData, profession: e.target.value })}
                     placeholder="Ex: Designer, Engenheiro, Autônomo"
@@ -369,9 +389,11 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   <label className="text-xs font-bold text-foreground">WhatsApp / Telefone *</label>
                   <div className="relative">
                     <input
-                      type="text"
+                      type="tel"
+                      inputMode="tel"
+                      maxLength={15}
                       value={formData.primaryPhone}
-                      onChange={(e) => setFormData({ ...formData, primaryPhone: e.target.value })}
+                      onChange={(e) => setFormData({ ...formData, primaryPhone: formatPhone(e.target.value) })}
                       placeholder="(11) 98765-4321"
                       className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                     />
@@ -384,6 +406,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   <label className="text-xs font-bold text-foreground">E-mail Principal</label>
                   <input
                     type="email"
+                    maxLength={100}
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     placeholder="seu.email@exemplo.com"
@@ -395,6 +418,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   <label className="text-xs font-bold text-foreground">Rede Social (Instagram/LinkedIn)</label>
                   <input
                     type="text"
+                    maxLength={80}
                     value={formData.socialMedia}
                     onChange={(e) => setFormData({ ...formData, socialMedia: e.target.value })}
                     placeholder="@seu.perfil"
@@ -405,11 +429,26 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-foreground">CPF</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-foreground">CPF</label>
+                    {formData.cpf && (
+                      <span className={`text-[10px] font-medium ${
+                        isValidCPF(formData.cpf)
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : formData.cpf.replace(/\D/g, "").length === 11
+                          ? "text-rose-500"
+                          : "text-muted-foreground"
+                      }`}>
+                        {formData.cpf.replace(/\D/g, "").length}/11 dígitos
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
+                    inputMode="numeric"
+                    maxLength={14}
                     value={formData.cpf}
-                    onChange={(e) => setFormData({ ...formData, cpf: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, cpf: formatCPF(e.target.value) })}
                     placeholder="000.000.000-00"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   />
@@ -418,8 +457,9 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   <label className="text-xs font-bold text-foreground">RG</label>
                   <input
                     type="text"
+                    maxLength={12}
                     value={formData.rg}
-                    onChange={(e) => setFormData({ ...formData, rg: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, rg: formatRG(e.target.value) })}
                     placeholder="00.000.000-0"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   />
@@ -501,6 +541,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   </label>
                   <textarea
                     rows={2}
+                    maxLength={500}
                     value={formData.protectionDetails}
                     onChange={(e) => setFormData({ ...formData, protectionDetails: e.target.value })}
                     placeholder="Ex: Telas instaladas em 100% das janelas por empresa especializada com malha 5cm."
@@ -601,6 +642,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                 {formData.allergyCases && (
                   <input
                     type="text"
+                    maxLength={300}
                     value={formData.allergyDetails}
                     onChange={(e) => setFormData({ ...formData, allergyDetails: e.target.value })}
                     placeholder="Descreva o caso e se já há acompanhamento médico..."
@@ -637,6 +679,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                 </label>
                 <textarea
                   rows={2}
+                  maxLength={500}
                   value={formData.travelCarePlan}
                   onChange={(e) => setFormData({ ...formData, travelCarePlan: e.target.value })}
                   placeholder="Com quem ou onde o animal ficará quando a família viajar?"
@@ -674,6 +717,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                 </label>
                 <textarea
                   rows={3}
+                  maxLength={500}
                   value={formData.previousPetsHistory}
                   onChange={(e) => setFormData({ ...formData, previousPetsHistory: e.target.value })}
                   placeholder="Já teve animais antes? Por quanto tempo viveram e quais foram os cuidados?"

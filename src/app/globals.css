@@ -50,8 +50,8 @@
 }
 
 :root {
-  /* MODO CLARO: Fundo creme muito elegante baseado nas imagens enviadas */
-  --background: oklch(0.98 0.01 120);
+  /* MODO CLARO: Fundo branco limpo unificado */
+  --background: #ffffff;
   --foreground: oklch(0.2 0.02 150);
   
   --card: oklch(1 0 0);
@@ -101,8 +101,8 @@
 }
 
 .dark {
-  /* MODO ESCURO: Fundo escuro azul-noturno profundo e elegante ConnectPet */
-  --background: oklch(0.12 0.02 245);
+  /* MODO ESCURO: Fundo escuro azul-noturno profundo e elegante ConnectPet (#080E1A) */
+  --background: #080E1A;
   --foreground: oklch(0.98 0.01 240);
   
   --card: oklch(0.16 0.02 245);
