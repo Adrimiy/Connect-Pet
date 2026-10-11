@@ -1382,6 +1382,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateApplicationStatus = useCallback(async (appId: string, status: ApplicationStatus) => {
     if (!supabase || currentUser?.role !== 'guardian') return false;
+    const candidaturaAtualizada = applications.find((app) => app.id === appId);
     const { data, error } = await supabase
       .from('applications')
       .update({ status })
@@ -1397,10 +1398,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     setApplicationsState((anteriores) => anteriores.map((app) => app.id === appId ? { ...app, status } : app));
+    if (status === 'completed' && candidaturaAtualizada?.petId) {
+      setPetsState((anteriores) => anteriores.map((pet) =>
+        pet.id === candidaturaAtualizada.petId ? { ...pet, status: 'adopted' as const } : pet
+      ));
+    }
     reloadApplications();
     showToast('Status atualizado', 'O andamento da candidatura foi atualizado com sucesso.', 'success');
     return true;
-  }, [currentUser, reloadApplications, showToast, supabase]);
+  }, [applications, currentUser, reloadApplications, showToast, supabase]);
 
   const updateGuardianNotes = useCallback(async (appId: string, notes: string) => {
     if (!supabase || currentUser?.role !== 'guardian') return false;

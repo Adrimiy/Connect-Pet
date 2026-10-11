@@ -631,8 +631,8 @@ create trigger trg_applications_marcar_pet_em_processo
   after insert on public.applications
   for each row execute function public.applications_marcar_pet_em_processo();
 
--- 10.5 Registra automaticamente a mensagem de sistema quando o status da candidatura muda.
--- (O site tentava gravar essa mensagem com sender_id = 'system', o que as políticas de RLS bloqueiam.)
+-- 10.5 Registra a mensagem de sistema e sincroniza a conclusão da adoção com o pet.
+-- A função valida o responsável antes de atualizar o pet com privilégios internos do banco.
 create or replace function public.applications_registrar_mudanca_status()
 returns trigger
 language plpgsql
@@ -662,6 +662,13 @@ begin
         else new.status
       end || '.'
     );
+
+    if new.status = 'completed' and new.pet_id is not null then
+      update public.pets
+        set status = 'adopted'
+        where id = new.pet_id
+          and guardian_id = new.guardian_id;
+    end if;
   end if;
   return new;
 end;
@@ -671,6 +678,18 @@ drop trigger if exists trg_applications_registrar_mudanca_status on public.appli
 create trigger trg_applications_registrar_mudanca_status
   after update of status on public.applications
   for each row execute function public.applications_registrar_mudanca_status();
+
+-- Corrige pets de candidaturas que já haviam sido concluídas antes desta sincronização.
+update public.pets p
+  set status = 'adopted'
+  where p.status is distinct from 'adopted'
+    and exists (
+      select 1
+      from public.applications a
+      where a.pet_id = p.id
+        and a.guardian_id = p.guardian_id
+        and a.status = 'completed'
+    );
 
 -- 10.6 Criação automática do perfil (profiles) quando um usuário se cadastra.
 -- Evita perfil ausente quando o cadastro exige confirmação de e-mail (ainda sem sessão para gravar via RLS).

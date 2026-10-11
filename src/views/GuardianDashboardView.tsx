@@ -144,11 +144,28 @@ export function GuardianDashboardView() {
     );
   }
 
-  // Metrics computation
+  // Métricas calculadas a partir dos pets e das candidaturas persistidas.
   const totalPets = guardianPets.length;
-  const inProcessPets = guardianPets.filter((p) => p.status === "in_process").length;
-  const adoptedPets = guardianPets.filter((p) => p.status === "adopted").length;
-  const pendingApps = guardianApplications.filter((a) => a.status === "pending").length;
+  const idsPetsComAdocaoConcluida = new Set(
+    guardianApplications
+      .filter((candidatura) => candidatura.status === "completed" && candidatura.petId)
+      .map((candidatura) => candidatura.petId)
+  );
+  const chavesAdocoesConcluidas = new Set<string>();
+  guardianPets
+    .filter((pet) => pet.status === "adopted")
+    .forEach((pet) => chavesAdocoesConcluidas.add(`pet:${pet.id}`));
+  guardianApplications
+    .filter((candidatura) => candidatura.status === "completed")
+    .forEach((candidatura) => chavesAdocoesConcluidas.add(
+      candidatura.petId ? `pet:${candidatura.petId}` : `candidatura:${candidatura.id}`
+    ));
+  const adocoesConcluidas = chavesAdocoesConcluidas.size;
+  const triagensEmAberto = guardianApplications.filter((candidatura) =>
+    candidatura.status === "pending"
+    || candidatura.status === "under_review"
+    || candidatura.status === "approved"
+  ).length;
   const now = new Date();
   const petsThisMonth = guardianPets.filter((pet) => {
     const createdAt = new Date(pet.createdAt);
@@ -156,7 +173,10 @@ export function GuardianDashboardView() {
       && createdAt.getMonth() === now.getMonth()
       && createdAt.getFullYear() === now.getFullYear();
   }).length;
-  const adoptionRate = totalPets > 0 ? Math.round((adoptedPets / totalPets) * 100) : null;
+  const petsAdotados = guardianPets.filter((pet) =>
+    pet.status === "adopted" || idsPetsComAdocaoConcluida.has(pet.id)
+  ).length;
+  const adoptionRate = totalPets > 0 ? Math.round((petsAdotados / totalPets) * 100) : null;
   const petsWithRegisteredCare = guardianPets.filter((pet) => pet.vaccinated && pet.castrated).length;
 
   return (
@@ -697,17 +717,17 @@ export function GuardianDashboardView() {
 
             <div className="p-4 sm:p-6 rounded-3xl bg-card border border-border/60 shadow-sm space-y-1">
               <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Adoções Concluídas</span>
-              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{adoptedPets}</p>
+              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{adocoesConcluidas}</p>
               <p className="text-xs text-emerald-600 font-medium">
-                {adoptedPets > 0 ? `${adoptedPets} adoção${adoptedPets > 1 ? "ões" : ""} registrada${adoptedPets > 1 ? "s" : ""}` : "Nenhuma adoção concluída"}
+                {adocoesConcluidas > 0 ? `${adocoesConcluidas} adoção${adocoesConcluidas > 1 ? "ões" : ""} registrada${adocoesConcluidas > 1 ? "s" : ""}` : "Nenhuma adoção concluída"}
               </p>
             </div>
 
             <div className="p-4 sm:p-6 rounded-3xl bg-card border border-border/60 shadow-sm space-y-1">
               <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Triagens em Aberto</span>
-              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{inProcessPets + pendingApps}</p>
+              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{triagensEmAberto}</p>
               <p className="text-xs text-primary font-medium">
-                {inProcessPets + pendingApps > 0 ? "Aguardando resposta da ONG" : "Sem pendências no momento"}
+                {triagensEmAberto > 0 ? "Aguardando resposta da ONG" : "Sem pendências no momento"}
               </p>
             </div>
 

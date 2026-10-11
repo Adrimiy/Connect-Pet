@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.4.2] - 2026-10-11
+### Commit
+`fix: sincronizar adoções concluídas com métricas e pets`
+
+### Mudanças
+- Atualiza o pet para adotado quando a ONG ou o doador conclui uma candidatura, refletindo a mudança imediatamente no painel e de forma persistente no banco.
+- Corrige os indicadores para contar candidaturas realmente abertas e reconhecer adoções concluídas em dados legados sem duplicar o mesmo pet.
+
+---
+
 ## [v0.4.1] - 2026-10-11
 ### Commit
 `fix: impedir falhas com imagens externas não autorizadas`
