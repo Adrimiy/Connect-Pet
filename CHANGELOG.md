@@ -1,5 +1,40 @@
 # Changelog
 
+## [v0.4.1] - 2026-10-11
+### Commit
+`fix: impedir falhas com imagens externas não autorizadas`
+
+### Mudanças
+- Normaliza fotos de pets, candidaturas e avatares antes da renderização pelo `next/image`.
+- Substitui URLs legadas de origens não configuradas pelo placeholder local, preservando apenas caminhos locais, Unsplash e o Storage do Supabase.
+
+---
+
+## [v0.4.0] - 2026-10-11
+### Commit
+`feat: concluir gestão segura de pets e persistência real no Supabase`
+
+### Mudanças
+- Consolida o cadastro, a edição, a atualização de status e a exclusão dos pets publicados pelo próprio perfil de ONG ou doador, com confirmação de persistência, tratamento de carregamento e limpeza das fotos no Storage.
+- Remove dados mockados, respostas fictícias de candidaturas, métricas inventadas e persistências de negócio no navegador, mantendo apenas dados reais carregados do Supabase.
+- Reforça autenticação, cadastro de ONG ou doador individual, perfis, favoritos, candidaturas, mensagens, avatares, RLS, privilégios e triggers no schema idempotente.
+- Corrige estados de erro e carregamento, rotas legadas, textos imprecisos e responsividade mobile-first com áreas de toque acessíveis.
+- Remove dependências, utilitários, dados e imagens padrão sem uso e restringe as origens remotas aceitas pelo componente de imagens.
+- Atualiza Next.js e eslint-config-next para 16.4.0, aplica correções transitivas seguras e deixa a auditoria de dependências de produção sem vulnerabilidades conhecidas.
+
+---
+
+## [v0.3.0] - 2026-10-10
+### Commit
+`feat: permitir edição segura dos pets publicados`
+
+### Mudanças
+- Adiciona acesso à edição em cada cartão de pet do painel da ONG ou doador.
+- Permite atualizar dados, fotos, condições de saúde e status da adoção em um formulário responsivo.
+- Restringe a edição ao perfil proprietário e só confirma o salvamento após a resposta do Supabase.
+
+---
+
 ## [v0.2.4] - 2026-10-10
 ### Commit
 `fix: sincronizar autenticação real no envio de fotos`

@@ -12,11 +12,21 @@ import {
   CheckCircle2,
   MessageSquare,
   Send,
-  ArrowRight
+  ArrowRight,
+  Loader2,
+  AlertCircle
 } from "lucide-react";
 
 export function AdopterApplicationsView() {
-  const { currentUser, applications, sendApplicationMessage } = useApp();
+  const {
+    currentUser,
+    authLoading,
+    applications,
+    applicationsLoading,
+    applicationsError,
+    reloadApplications,
+    sendApplicationMessage
+  } = useApp();
 
   // Filter applications belonging strictly to the current adopter
   const userApplications = applications.filter((app) => {
@@ -34,11 +44,10 @@ export function AdopterApplicationsView() {
   const selectedApp = userApplications.find((a) => a.id === (selectedAppId || userApplications[0]?.id)) || userApplications[0] || null;
   const [chatMessage, setChatMessage] = useState("");
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedApp || !chatMessage.trim()) return;
-    sendApplicationMessage(selectedApp.id, chatMessage);
-    setChatMessage("");
+    if (await sendApplicationMessage(selectedApp.id, chatMessage)) setChatMessage("");
   };
 
   const stepsList: { status: ApplicationStatus; label: string; desc: string }[] = [
@@ -83,7 +92,11 @@ export function AdopterApplicationsView() {
         </Button>
       </div>
 
-      {!currentUser ? (
+      {authLoading || (Boolean(currentUser) && applicationsLoading) ? (
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando candidaturas" />
+        </div>
+      ) : !currentUser ? (
         <div className="p-12 rounded-3xl bg-secondary/30 border border-border text-center space-y-4 max-w-lg mx-auto">
           <FileCheck2 className="w-12 h-12 text-muted-foreground mx-auto opacity-50" />
           <div className="space-y-1">
@@ -95,6 +108,15 @@ export function AdopterApplicationsView() {
           <Button asChild className="rounded-full bg-primary hover:bg-primary/90">
             <Link href="/login?redirect=/minhas-candidaturas">Fazer Login</Link>
           </Button>
+        </div>
+      ) : applicationsError ? (
+        <div role="alert" className="mx-auto max-w-lg space-y-4 rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center sm:p-10">
+          <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
+          <div>
+            <h3 className="font-bold text-foreground">Candidaturas indisponíveis</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{applicationsError}</p>
+          </div>
+          <Button variant="outline" onClick={reloadApplications} className="rounded-full">Tentar novamente</Button>
         </div>
       ) : userApplications.length === 0 ? (
         <div className="p-12 rounded-3xl bg-secondary/30 border border-border text-center space-y-4 max-w-lg mx-auto">

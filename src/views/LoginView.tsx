@@ -7,6 +7,7 @@ import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/client";
 import { isValidEmail } from "@/lib/validation";
+import { sanitizeRedirect } from "@/components/auth/auth-features";
 import {
   PawPrint,
   UserCheck,
@@ -19,7 +20,7 @@ import {
 export function LoginView() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirect = searchParams.get("redirect") || "/";
+  const redirect = sanitizeRedirect(searchParams.get("redirect") || "/", "/");
   const initialEmail = searchParams.get("email") || "";
 
   const { showToast } = useApp();
@@ -86,8 +87,20 @@ export function LoginView() {
 
       if (data.session && data.user) {
         showToast("Bem-vindo(a) de volta!", "Login realizado com sucesso.", "success");
-        const userRole = data.user.user_metadata?.role || roleTab;
-        if (userRole === "guardian") {
+        const { data: profile, error: erroPerfil } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", data.user.id)
+          .maybeSingle();
+        if (erroPerfil || (profile?.role !== "guardian" && profile?.role !== "adopter")) {
+          await supabase.auth.signOut({ scope: "local" });
+          const mensagem = "Sua conta não possui um perfil válido. Aplique o schema atualizado do Supabase e tente novamente.";
+          setErrorMessage(mensagem);
+          showToast("Perfil indisponível", mensagem, "error");
+          return;
+        }
+        const papelUsuario = profile.role;
+        if (papelUsuario === "guardian") {
           router.push(redirect === "/" ? "/dashboard" : redirect);
         } else {
           router.push(redirect);
@@ -167,7 +180,7 @@ export function LoginView() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="seu.email@exemplo.com"
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
           </div>
@@ -184,7 +197,7 @@ export function LoginView() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
           </div>

@@ -10,9 +10,9 @@ create table if not exists public.pets (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   species text not null check (species in ('dog', 'cat')),
-  breed text not null default 'SRD',
+  breed text not null,
   size text not null check (size in ('small', 'medium', 'large')),
-  approximate_age text not null default '1 ano',
+  approximate_age text not null,
   age_category text not null check (age_category in ('puppy', 'young', 'adult', 'senior')),
   sex text not null check (sex in ('male', 'female')),
   status text not null default 'available' check (status in ('available', 'in_process', 'adopted')),
@@ -31,15 +31,22 @@ create table if not exists public.pets (
   guardian_type text not null check (guardian_type in ('individual', 'ngo')),
   guardian_phone text,
   guardian_email text,
-  city text default 'São Paulo',
-  state text default 'SP',
-  neighborhood text default 'Vila Mariana',
+  city text,
+  state text,
+  neighborhood text,
   created_at timestamp with time zone not null default timezone('utc'::text, now())
 );
 
 -- Índices para otimização de busca na tabela pets
 -- (idx_pets_status e idx_pets_species removidos: o catálogo filtra no navegador, nenhuma query usa esses filtros)
 create index if not exists idx_pets_guardian_id on public.pets (guardian_id);
+
+-- Evita que integrações incompletas atribuam raça, idade ou localização fictícias.
+alter table public.pets alter column breed drop default;
+alter table public.pets alter column approximate_age drop default;
+alter table public.pets alter column city drop default;
+alter table public.pets alter column state drop default;
+alter table public.pets alter column neighborhood drop default;
 
 -- 3. Tabela de Candidaturas de Adoção (applications)
 create table if not exists public.applications (
@@ -57,6 +64,12 @@ create table if not exists public.applications (
   dossier jsonb not null default '{}'::jsonb,
   automated_analysis jsonb not null default '{}'::jsonb,
   guardian_notes text default '',
+  pet_name text,
+  pet_photo text,
+  pet_species text,
+  guardian_name text,
+  guardian_type text,
+  candidate_id text,
   created_at timestamp with time zone not null default timezone('utc'::text, now())
 );
 
@@ -127,6 +140,16 @@ alter table public.profiles add column if not exists has_children boolean;
 alter table public.profiles add column if not exists species_preference text;
 alter table public.profiles add column if not exists size_preference text;
 
+-- Campos de leitura usados pelo site e pelas políticas RLS das candidaturas.
+-- Precisam existir antes da criação das políticas, inclusive em bancos já existentes.
+alter table public.applications add column if not exists pet_name text;
+alter table public.applications add column if not exists pet_photo text;
+alter table public.applications add column if not exists pet_species text;
+alter table public.applications add column if not exists guardian_name text;
+alter table public.applications add column if not exists guardian_type text;
+alter table public.applications add column if not exists candidate_id text;
+create index if not exists idx_applications_candidate_id on public.applications (candidate_id);
+
 -- (idx_profiles_role e idx_profiles_email removidos: profiles só é consultada pela chave primária 'id')
 
 -- 6. Tabela de Favoritos / Curtidas (favorites)
@@ -159,20 +182,48 @@ drop policy if exists "Allow insert for pets" on public.pets;
 create policy "Allow insert for pets"
   on public.pets for insert
   to authenticated
-  with check (guardian_id = (select auth.uid())::text);
+  with check (
+    guardian_id = (select auth.uid())::text
+    and exists (
+      select 1 from public.profiles perfil
+      where perfil.id = (select auth.uid())
+        and perfil.role = 'guardian'
+    )
+  );
 
 drop policy if exists "Allow update for pets" on public.pets;
 create policy "Allow update for pets"
   on public.pets for update
   to authenticated
-  using (guardian_id = (select auth.uid())::text)
-  with check (guardian_id = (select auth.uid())::text);
+  using (
+    guardian_id = (select auth.uid())::text
+    and exists (
+      select 1 from public.profiles perfil
+      where perfil.id = (select auth.uid())
+        and perfil.role = 'guardian'
+    )
+  )
+  with check (
+    guardian_id = (select auth.uid())::text
+    and exists (
+      select 1 from public.profiles perfil
+      where perfil.id = (select auth.uid())
+        and perfil.role = 'guardian'
+    )
+  );
 
 drop policy if exists "Allow delete for pets" on public.pets;
 create policy "Allow delete for pets"
   on public.pets for delete
   to authenticated
-  using (guardian_id = (select auth.uid())::text);
+  using (
+    guardian_id = (select auth.uid())::text
+    and exists (
+      select 1 from public.profiles perfil
+      where perfil.id = (select auth.uid())
+        and perfil.role = 'guardian'
+    )
+  );
 
 -- Políticas para Profiles
 -- Cada usuário lê apenas o PRÓPRIO perfil. O site nunca lê perfis de terceiros, e o perfil contém
@@ -198,11 +249,9 @@ create policy "Allow user to update own profile"
   using ((select auth.uid()) = id)
   with check ((select auth.uid()) = id);
 
+-- A exclusão da conta deve ocorrer pelo fluxo de Auth (que faz o cascade do perfil),
+-- e não apagando diretamente a linha de perfil pela Data API.
 drop policy if exists "Allow user to delete own profile" on public.profiles;
-create policy "Allow user to delete own profile"
-  on public.profiles for delete
-  to authenticated
-  using ((select auth.uid()) = id);
 
 -- Políticas para Favorites (apenas o próprio usuário acessa seus favoritos)
 drop policy if exists "Allow user to read own favorites" on public.favorites;
@@ -231,6 +280,7 @@ create policy "Allow participants to view applications"
   to authenticated
   using (
     guardian_id = (select auth.uid())::text
+    or candidate_id = (select auth.uid())::text
     or lower(candidate_email) = lower((select auth.jwt() ->> 'email'))
     or (candidate ->> 'id') = (select auth.uid())::text
   );
@@ -243,6 +293,7 @@ create policy "Allow candidate to insert application"
   to authenticated
   with check (
     status = 'pending'
+    and candidate_id = (select auth.uid())::text
     and (
       lower(candidate_email) = lower((select auth.jwt() ->> 'email'))
       or (candidate ->> 'id') = (select auth.uid())::text
@@ -261,8 +312,22 @@ drop policy if exists "Allow guardian to update application" on public.applicati
 create policy "Allow guardian to update application"
   on public.applications for update
   to authenticated
-  using (guardian_id = (select auth.uid())::text)
-  with check (guardian_id = (select auth.uid())::text);
+  using (
+    guardian_id = (select auth.uid())::text
+    and exists (
+      select 1 from public.profiles perfil
+      where perfil.id = (select auth.uid())
+        and perfil.role = 'guardian'
+    )
+  )
+  with check (
+    guardian_id = (select auth.uid())::text
+    and exists (
+      select 1 from public.profiles perfil
+      where perfil.id = (select auth.uid())
+        and perfil.role = 'guardian'
+    )
+  );
 
 -- Políticas para Mensagens de Candidatura
 drop policy if exists "Allow participants to read application messages" on public.application_messages;
@@ -275,6 +340,7 @@ create policy "Allow participants to read application messages"
       where a.id = application_id
       and (
         a.guardian_id = (select auth.uid())::text
+        or a.candidate_id = (select auth.uid())::text
         or lower(a.candidate_email) = lower((select auth.jwt() ->> 'email'))
         or (a.candidate ->> 'id') = (select auth.uid())::text
       )
@@ -291,9 +357,18 @@ create policy "Allow participants to insert application messages"
       select 1 from public.applications a
       where a.id = application_id
       and (
-        a.guardian_id = (select auth.uid())::text
-        or lower(a.candidate_email) = lower((select auth.jwt() ->> 'email'))
-        or (a.candidate ->> 'id') = (select auth.uid())::text
+        (
+          sender_role = 'guardian'
+          and a.guardian_id = (select auth.uid())::text
+        )
+        or (
+          sender_role in ('adopter', 'candidate')
+          and (
+            a.candidate_id = (select auth.uid())::text
+            or lower(a.candidate_email) = lower((select auth.jwt() ->> 'email'))
+            or (a.candidate ->> 'id') = (select auth.uid())::text
+          )
+        )
       )
     )
   );
@@ -331,6 +406,11 @@ create policy "Pet photos: authenticated upload to own folder"
   with check (
     bucket_id = 'pet-photos'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and exists (
+      select 1 from public.profiles perfil
+      where perfil.id = (select auth.uid())
+        and perfil.role = 'guardian'
+    )
   );
 
 -- O Storage devolve os metadados do objeto apó o INSERT; por isso o proprietário
@@ -341,7 +421,7 @@ create policy "Pet photos: owner can read own files"
   to authenticated
   using (
     bucket_id = 'pet-photos'
-    and owner_id = (select auth.uid())::text
+    and owner_id = (select auth.uid())
   );
 
 drop policy if exists "Pet photos: owner can update own files" on storage.objects;
@@ -351,10 +431,20 @@ create policy "Pet photos: owner can update own files"
   using (
     bucket_id = 'pet-photos'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and exists (
+      select 1 from public.profiles perfil
+      where perfil.id = (select auth.uid())
+        and perfil.role = 'guardian'
+    )
   )
   with check (
     bucket_id = 'pet-photos'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and exists (
+      select 1 from public.profiles perfil
+      where perfil.id = (select auth.uid())
+        and perfil.role = 'guardian'
+    )
   );
 
 drop policy if exists "Pet photos: owner can delete own files" on storage.objects;
@@ -421,7 +511,39 @@ create trigger trg_applications_preencher_dados
   before insert on public.applications
   for each row execute function public.applications_preencher_dados();
 
+-- Depois de enviada, a candidatura só permite alterar o andamento e as notas da ONG.
+-- Impede que um participante troque pet, candidato, responsável ou respostas do dossiê.
+create or replace function public.applications_proteger_dados_enviados()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.pet_id := old.pet_id;
+  new.candidate_name := old.candidate_name;
+  new.candidate_email := old.candidate_email;
+  new.candidate_phone := old.candidate_phone;
+  new.guardian_id := old.guardian_id;
+  new.candidate := old.candidate;
+  new.housing := old.housing;
+  new.routine := old.routine;
+  new.finance := old.finance;
+  new.dossier := old.dossier;
+  new.automated_analysis := old.automated_analysis;
+  new.created_at := old.created_at;
+  new.pet_name := old.pet_name;
+  new.pet_photo := old.pet_photo;
+  new.pet_species := old.pet_species;
+  new.guardian_name := old.guardian_name;
+  new.guardian_type := old.guardian_type;
+  new.candidate_id := old.candidate_id;
+  return new;
+end;
+$$;
+
 -- Preenche as candidaturas já existentes
+drop trigger if exists trg_applications_proteger_dados_enviados on public.applications;
+
 update public.applications a
   set pet_name = p.name,
       pet_photo = p.photos[1],
@@ -437,6 +559,49 @@ update public.applications
   where candidate_id is null
     and candidate ? 'id';
 
+create trigger trg_applications_proteger_dados_enviados
+  before update on public.applications
+  for each row execute function public.applications_proteger_dados_enviados();
+
+-- Deriva a identidade exibida em cada mensagem do perfil autenticado.
+-- Mensagens de sistema criadas por trigger preservam os valores internos controlados pelo banco.
+create or replace function public.application_messages_preencher_remetente()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  perfil record;
+begin
+  if new.sender_role = 'system' and pg_trigger_depth() > 1 then
+    return new;
+  end if;
+
+  if (select auth.uid()) is null then
+    raise exception 'É necessário estar autenticado para enviar mensagens.';
+  end if;
+
+  select p.name, p.role
+    into perfil
+    from public.profiles p
+    where p.id = (select auth.uid());
+
+  if not found then
+    raise exception 'Perfil autenticado não encontrado.';
+  end if;
+
+  new.sender_id := (select auth.uid())::text;
+  new.sender_name := perfil.name;
+  new.sender_role := case when perfil.role = 'guardian' then 'guardian' else 'candidate' end;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_application_messages_preencher_remetente on public.application_messages;
+create trigger trg_application_messages_preencher_remetente
+  before insert on public.application_messages
+  for each row execute function public.application_messages_preencher_remetente();
+
 -- 10.4 Ao receber uma candidatura, o pet passa para "Em Processo" no banco.
 -- O adotante não tem permissão de editar pets, por isso a função roda com privilégios do dono (security definer).
 create or replace function public.applications_marcar_pet_em_processo()
@@ -446,6 +611,11 @@ security definer
 set search_path = ''
 as $$
 begin
+  if (select auth.uid()) is not null
+    and new.candidate_id is distinct from (select auth.uid())::text then
+    raise exception 'Candidato autenticado não corresponde à candidatura.';
+  end if;
+
   if new.pet_id is not null then
     update public.pets
       set status = 'in_process'
@@ -471,6 +641,11 @@ set search_path = ''
 as $$
 begin
   if new.status is distinct from old.status then
+    if (select auth.uid()) is not null
+      and new.guardian_id is distinct from (select auth.uid())::text then
+      raise exception 'Responsável autenticado não corresponde à candidatura.';
+    end if;
+
     insert into public.application_messages (application_id, sender_id, sender_name, sender_role, message)
     values (
       new.id,
@@ -499,7 +674,7 @@ create trigger trg_applications_registrar_mudanca_status
 
 -- 10.6 Criação automática do perfil (profiles) quando um usuário se cadastra.
 -- Evita perfil ausente quando o cadastro exige confirmação de e-mail (ainda sem sessão para gravar via RLS).
--- Nunca bloqueia o cadastro: em caso de erro apenas registra um aviso.
+-- Uma falha é propagada para impedir a criação silenciosa de uma conta sem perfil utilizável.
 -- Observação: "verified" nasce sempre falso; a verificação de ONGs deve ser feita pelo administrador.
 create or replace function public.handle_new_user()
 returns trigger
@@ -537,9 +712,6 @@ begin
   on conflict (id) do nothing;
 
   return new;
-exception when others then
-  raise warning 'handle_new_user falhou para %: %', new.id, sqlerrm;
-  return new;
 end;
 $$;
 
@@ -563,6 +735,14 @@ begin
       new.verified := false;
     else
       new.verified := old.verified;
+      new.role := old.role;
+      new.email := old.email;
+      new.cpf := old.cpf;
+      if nullif(old.birth_date, '') is not null then
+        new.birth_date := old.birth_date;
+      end if;
+      new.guardian_type := old.guardian_type;
+      new.document := old.document;
     end if;
   end if;
 
@@ -577,9 +757,97 @@ create trigger trg_profiles_antes_de_gravar
 
 -- 10.8 Funções de trigger não devem poder ser chamadas diretamente pela API pública
 revoke execute on function public.applications_preencher_dados() from public, anon, authenticated;
+revoke execute on function public.applications_proteger_dados_enviados() from public, anon, authenticated;
+revoke execute on function public.application_messages_preencher_remetente() from public, anon, authenticated;
 revoke execute on function public.applications_marcar_pet_em_processo() from public, anon, authenticated;
 revoke execute on function public.applications_registrar_mudanca_status() from public, anon, authenticated;
 revoke execute on function public.handle_new_user() from public, anon, authenticated;
 revoke execute on function public.profiles_antes_de_gravar() from public, anon, authenticated;
+
+-- ==============================================================================
+-- 11. Exposição explícita da Data API e avatares de perfil
+-- Necessário para projetos que não concedem acesso automático às novas tabelas.
+-- As políticas RLS acima continuam responsáveis por restringir as linhas.
+-- ==============================================================================
+grant usage on schema public to anon, authenticated;
+grant select on table public.pets to anon;
+grant select, insert, update, delete on table public.pets to authenticated;
+grant select, insert, update on table public.profiles to authenticated;
+revoke delete on table public.profiles from authenticated;
+grant select, insert, delete on table public.favorites to authenticated;
+grant select, insert on table public.applications to authenticated;
+revoke update on table public.applications from authenticated;
+grant update (status, guardian_notes) on table public.applications to authenticated;
+grant select, insert on table public.application_messages to authenticated;
+
+-- Bucket público somente para a leitura das imagens de perfil já conhecidas por URL.
+-- Escrita e remoção continuam limitadas à pasta do próprio usuário.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'avatars',
+  'avatars',
+  true,
+  2097152,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update
+  set public = excluded.public,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Avatars: upload na própria pasta" on storage.objects;
+create policy "Avatars: upload na própria pasta"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
+
+drop policy if exists "Avatars: proprietário lê os próprios arquivos" on storage.objects;
+create policy "Avatars: proprietário lê os próprios arquivos"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'avatars'
+    and owner_id = (select auth.uid())
+  );
+
+drop policy if exists "Avatars: proprietário remove os próprios arquivos" on storage.objects;
+create policy "Avatars: proprietário remove os próprios arquivos"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'avatars'
+    and owner_id = (select auth.uid())
+  );
+
+-- Mantém os dados públicos do responsável sincronizados nos anúncios existentes.
+create or replace function public.sincronizar_perfil_guardiao_nos_pets()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.role = 'guardian' then
+    update public.pets
+      set guardian_name = new.name,
+          guardian_phone = new.primary_phone,
+          guardian_email = new.email,
+          city = new.city,
+          state = new.state,
+          neighborhood = new.neighborhood
+      where guardian_id = new.id::text;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_sincronizar_perfil_guardiao_nos_pets on public.profiles;
+create trigger trg_sincronizar_perfil_guardiao_nos_pets
+  after update of name, primary_phone, email, city, state, neighborhood on public.profiles
+  for each row execute function public.sincronizar_perfil_guardiao_nos_pets();
+
+revoke execute on function public.sincronizar_perfil_guardiao_nos_pets() from public, anon, authenticated;
 
 

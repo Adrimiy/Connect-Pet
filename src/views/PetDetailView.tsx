@@ -36,6 +36,8 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
   const [isAdoptionModalOpen, setIsAdoptionModalOpen] = useState(false);
 
   const favorite = isFavorite(pet.id);
+  const guardianPhoneDigits = pet.guardianPhone.replace(/\D/g, "");
+  const locationText = [pet.location.neighborhood, pet.location.city, pet.location.state].filter(Boolean).join(", ") || "Localização não informada";
 
   const handleAdoptClick = () => {
     if (!currentUser) {
@@ -43,13 +45,32 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
       router.push("/login?redirect=" + encodeURIComponent(`/pets/${pet.id}`));
       return;
     }
+    if (currentUser.role !== "adopter") {
+      showToast("Perfil de gestão", "Use uma conta de adotante para enviar uma candidatura.", "info");
+      return;
+    }
     setIsAdoptionModalOpen(true);
   };
 
-  const handleShare = () => {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(window.location.href);
-      showToast("Link copiado!", "Compartilhe para ajudar este peludinho a encontrar um lar.", "success");
+  const handleShare = async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: `${pet.name} no ConnectPet`,
+          text: `Conheça ${pet.name}, disponível no ConnectPet.`,
+          url: window.location.href
+        });
+        return;
+      }
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(window.location.href);
+        showToast("Link copiado!", "Compartilhe para ajudar este animal a encontrar um lar.", "success");
+        return;
+      }
+      throw new Error("Compartilhamento indisponível");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      showToast("Não foi possível compartilhar", "Copie o endereço desta página diretamente do navegador.", "warning");
     }
   };
 
@@ -164,7 +185,7 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
               </h1>
               <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
                 <MapPin className="w-3.5 h-3.5 text-primary" />
-                <span>{pet.location.neighborhood}, {pet.location.city} - {pet.location.state}</span>
+                <span>{locationText}</span>
               </div>
             </div>
 
@@ -191,18 +212,18 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
             {/* Quick Health Status Highlights */}
             <div className="grid grid-cols-3 gap-1.5 sm:gap-2 text-center text-xs">
               <div className={`p-2.5 sm:p-3 rounded-2xl border ${pet.vaccinated ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300" : "bg-secondary border-border text-muted-foreground"}`}>
-                <CheckCircle2 className="w-4 h-4 mx-auto mb-1 text-emerald-600 dark:text-emerald-400" />
-                <span className="font-bold block text-[11px] sm:text-xs">Vacinado</span>
+                <CheckCircle2 className={`w-4 h-4 mx-auto mb-1 ${pet.vaccinated ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                <span className="font-bold block text-[11px] sm:text-xs">{pet.vaccinated ? "Vacinado" : "Não vacinado"}</span>
               </div>
 
               <div className={`p-2.5 sm:p-3 rounded-2xl border ${pet.castrated ? "bg-primary/10 border-primary/30 text-primary" : "bg-secondary border-border text-muted-foreground"}`}>
-                <Sparkles className="w-4 h-4 mx-auto mb-1 text-primary" />
-                <span className="font-bold block text-[11px] sm:text-xs">Castrado</span>
+                <Sparkles className={`w-4 h-4 mx-auto mb-1 ${pet.castrated ? "text-primary" : "text-muted-foreground"}`} />
+                <span className="font-bold block text-[11px] sm:text-xs">{pet.castrated ? "Castrado" : "Não castrado"}</span>
               </div>
 
               <div className={`p-2.5 sm:p-3 rounded-2xl border ${pet.dewormed ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300" : "bg-secondary border-border text-muted-foreground"}`}>
-                <ShieldCheck className="w-4 h-4 mx-auto mb-1 text-emerald-600 dark:text-emerald-400" />
-                <span className="font-bold block text-[11px] sm:text-xs">Vermifugado</span>
+                <ShieldCheck className={`w-4 h-4 mx-auto mb-1 ${pet.dewormed ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                <span className="font-bold block text-[11px] sm:text-xs">{pet.dewormed ? "Vermifugado" : "Não vermifugado"}</span>
               </div>
             </div>
 
@@ -279,7 +300,7 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
             <div className="space-y-3 text-xs sm:text-sm">
               <div className="p-3 sm:p-3.5 rounded-2xl bg-secondary/50 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                 <span className="font-semibold text-foreground">Vacinação Aplicada:</span>
-                <span className="text-muted-foreground">{pet.vaccinationDetails || "Vacinação em dia."}</span>
+                <span className="text-muted-foreground">{pet.vaccinationDetails || "Detalhes não informados."}</span>
               </div>
 
               {pet.specialNeeds && (
@@ -305,7 +326,7 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
               </div>
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
-                  {pet.guardianType === "ngo" ? "ONG Verificada" : "Protetor Independente"}
+                  {pet.guardianType === "ngo" ? "ONG responsável" : "Protetor independente"}
                 </span>
                 <h4 className="font-bold text-lg text-foreground leading-tight">
                   {pet.guardianName}
@@ -314,25 +335,30 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
             </div>
 
             <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-              Esta instituição é responsável pelo resgate, reabilitação e triagem oficial deste animal. Cada candidatura passa por análise detalhada.
+              Este responsável publicou o animal e recebe as candidaturas enviadas pela plataforma para análise e contato.
             </p>
 
             <div className="space-y-2 pt-2 border-t border-border/50 text-xs">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <MapPin className="w-4 h-4 text-primary shrink-0" />
-                <span>{pet.location.city}, {pet.location.state}</span>
+                <span>{[pet.location.city, pet.location.state].filter(Boolean).join(", ") || "Localização não informada"}</span>
               </div>
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Mail className="w-4 h-4 text-primary shrink-0" />
-                <span>{pet.guardianEmail}</span>
-              </div>
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Phone className="w-4 h-4 text-primary shrink-0" />
-                <span>{pet.guardianPhone}</span>
-              </div>
+              {pet.guardianEmail && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Mail className="w-4 h-4 text-primary shrink-0" />
+                  <span className="break-all">{pet.guardianEmail}</span>
+                </div>
+              )}
+              {pet.guardianPhone && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Phone className="w-4 h-4 text-primary shrink-0" />
+                  <span>{pet.guardianPhone}</span>
+                </div>
+              )}
             </div>
 
             {/* Direct WhatsApp Contact Button */}
+            {guardianPhoneDigits.length >= 10 && (
             <div className="pt-2">
               <Button
                 variant="outline"
@@ -340,7 +366,7 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
                 className="w-full rounded-2xl text-xs font-semibold h-11 border-emerald-600/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
               >
                 <a
-                  href={`https://wa.me/55${pet.guardianPhone.replace(/\D/g, "")}?text=${encodeURIComponent(
+                  href={`https://wa.me/55${guardianPhoneDigits}?text=${encodeURIComponent(
                     `Olá! Encontrei o pet ${pet.name} no ConnectPet e gostaria de tirar dúvidas sobre o processo de adoção responsável.`
                   )}`}
                   target="_blank"
@@ -351,6 +377,7 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
                 </a>
               </Button>
             </div>
+            )}
           </div>
         </div>
 
@@ -358,6 +385,7 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
 
       {/* Pre-Adoption Modal Wizard */}
       <PreAdoptionModal
+        key={`${pet.id}-${currentUser?.id ?? "visitante"}`}
         pet={pet}
         isOpen={isAdoptionModalOpen}
         onClose={() => setIsAdoptionModalOpen(false)}

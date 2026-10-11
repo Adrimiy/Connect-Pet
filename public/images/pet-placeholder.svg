@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-labelledby="title description">
+  <title id="title">Foto do animal indisponível</title>
+  <description id="description">Ilustração neutra de uma pata</description>
+  <rect width="800" height="600" fill="#e0f2fe"/>
+  <g fill="#0284c7" opacity=".7">
+    <circle cx="305" cy="230" r="52"/>
+    <circle cx="415" cy="190" r="52"/>
+    <circle cx="520" cy="230" r="52"/>
+    <path d="M400 275c-89 0-163 70-163 145 0 55 42 86 94 64 26-11 45-18 69-18s43 7 69 18c52 22 94-9 94-64 0-75-74-145-163-145Z"/>
+  </g>
+</svg>

@@ -211,7 +211,7 @@ export function Navbar() {
                   )}
                 </div>
                 <div className="hidden md:flex flex-col">
-                  <span className="text-xs font-bold text-foreground leading-tight truncate max-w-[130px]">
+                  <span className="max-w-32 truncate text-xs font-bold leading-tight text-foreground">
                     {currentUser.name}
                   </span>
                   <span className="text-[10px] font-medium text-primary leading-none">
@@ -280,10 +280,10 @@ export function Navbar() {
             </div>
           ) : (
             <div className="hidden sm:flex items-center gap-2">
-              <Button variant="ghost" size="sm" asChild className="rounded-full text-xs min-h-[38px]">
+              <Button variant="ghost" size="sm" asChild className="rounded-full text-xs min-h-[44px]">
                 <Link href="/login">Entrar</Link>
               </Button>
-              <Button size="sm" asChild className="rounded-full text-xs bg-primary hover:bg-primary/90 min-h-[38px]">
+              <Button size="sm" asChild className="rounded-full text-xs bg-primary hover:bg-primary/90 min-h-[44px]">
                 <Link href="/cadastro">Cadastrar</Link>
               </Button>
             </div>

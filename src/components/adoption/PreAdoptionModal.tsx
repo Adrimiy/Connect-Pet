@@ -15,16 +15,14 @@ import {
   ShieldCheck,
   Wallet,
   Lock,
-  FileCheck2
+  FileCheck2,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  formatCPF,
   isValidCPF,
-  formatPhone,
   isValidPhone,
   isValidEmail,
-  formatRG,
   validateFullName
 } from "@/lib/validation";
 
@@ -39,11 +37,12 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
 
   const [step, setStep] = useState<number>(0);
   const [createdAppId, setCreatedAppId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Form state initialized with current user if adopter
   const isAdopter = currentUser?.role === "adopter";
   const adopterData = isAdopter ? (currentUser as AdopterProfile) : null;
-  const initialBirthDate = adopterData?.birthDate || "1998-01-01";
+  const initialBirthDate = adopterData?.birthDate || "";
 
   const [formData, setFormData] = useState({
     // Step 1: Candidate
@@ -57,26 +56,26 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
     rg: adopterData?.rg || "",
 
     // Step 2: Environment
-    housingType: "apartamento" as "apartamento" | "casa" | "sobrado" | "sitio",
-    housingStatus: "proprio" as "proprio" | "alugado",
-    landlordPermission: true,
-    hasProtection: true,
-    protectionDetails: "Apartamento com telas de proteção de 5cm instaladas em todas as janelas e na sacada.",
-    accessArea: "livre_total" as "livre_total" | "area_especifica",
+    housingType: "" as "" | "apartamento" | "casa" | "sobrado" | "sitio",
+    housingStatus: "" as "" | "proprio" | "alugado",
+    landlordPermission: false,
+    hasProtection: false,
+    protectionDetails: "",
+    accessArea: "" as "" | "livre_total" | "area_especifica",
 
     // Step 3: Routine & Family
-    adultsCount: 2,
+    adultsCount: 1,
     childrenCount: 0,
-    familyAgreement: true,
+    familyAgreement: false,
     allergyCases: false,
     allergyDetails: "",
     hoursAlone: 4,
-    travelCarePlan: "Em viagens, ficará sob cuidados de familiares de confiança ou pet sitter contratada.",
+    travelCarePlan: "",
 
     // Step 4: Pets & Finances
     hasCurrentPets: false,
-    previousPetsHistory: "Cuidados veterinários e carinho garantidos para o bem-estar do animal.",
-    costAwareness: true,
+    previousPetsHistory: "",
+    costAwareness: false,
   });
 
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -101,7 +100,8 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
   const currentAge = calculateAge(candidateBirthDate);
   const isCandidateAdultEnough = isAgeAllowed(candidateBirthDate);
 
-  const handleNext = () => {
+  const handleNext = async () => {
+    if (isSubmitting) return;
     setValidationError(null);
 
     // Step 0 validation
@@ -145,6 +145,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
 
     // Step 2 validation: Housing & protection
     if (step === 2) {
+      if (!formData.housingType || !formData.housingStatus || !formData.accessArea) {
+        setValidationError("Selecione o tipo e a condição do imóvel e informe a área de circulação do animal.");
+        return;
+      }
       if (formData.housingType === "apartamento" && !formData.hasProtection) {
         setValidationError("Para apartamentos, é imprescindível haver telas nas janelas e sacadas para a segurança do pet.");
         return;
@@ -163,6 +167,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
         setValidationError("Todos os moradores da residência devem estar de acordo com a adoção antes do envio.");
         return;
       }
+      if (formData.adultsCount < 1 || formData.childrenCount < 0) {
+        setValidationError("Informe corretamente a quantidade de adultos e crianças na residência.");
+        return;
+      }
       if (formData.allergyCases && !formData.allergyDetails.trim()) {
         setValidationError("Por favor, detalhe como a alergia é controlada e como será o manejo com o animal.");
         return;
@@ -173,6 +181,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
 
     // Step 4: Submit Dossier
     if (step === 4) {
+      if (currentUser?.role !== "adopter") {
+        setValidationError("Sua sessão de adotante não está disponível. Entre novamente para enviar a candidatura.");
+        return;
+      }
       if (!formData.costAwareness) {
         setValidationError("Você deve confirmar a ciência sobre os custos contínuos e veterinários do animal.");
         return;
@@ -187,7 +199,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
         guardianId: pet.guardianId,
         guardianName: pet.guardianName,
         guardianType: pet.guardianType,
-        candidateId: currentUser?.id || "guest-adopter",
+        candidateId: currentUser.id,
         candidate: {
           name: formData.name,
           birthDate: candidateBirthDate,
@@ -198,12 +210,12 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
           cpf: formData.cpf,
           rg: formData.rg
         },
-        housingType: formData.housingType,
-        housingStatus: formData.housingStatus,
+        housingType: formData.housingType as PreAdoptionApplication["housingType"],
+        housingStatus: formData.housingStatus as PreAdoptionApplication["housingStatus"],
         landlordPermission: formData.landlordPermission,
         hasProtection: formData.hasProtection,
         protectionDetails: formData.protectionDetails,
-        accessArea: formData.accessArea,
+        accessArea: formData.accessArea as PreAdoptionApplication["accessArea"],
         adultsCount: Number(formData.adultsCount),
         childrenCount: Number(formData.childrenCount),
         familyAgreement: formData.familyAgreement,
@@ -216,7 +228,17 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
         costAwareness: formData.costAwareness
       };
 
-      const newApp = submitApplication(payload);
+      setIsSubmitting(true);
+      let newApp = null;
+      try {
+        newApp = await submitApplication(payload);
+      } finally {
+        setIsSubmitting(false);
+      }
+      if (!newApp) {
+        setValidationError("Não foi possível enviar a candidatura. Tente novamente.");
+        return;
+      }
       setCreatedAppId(newApp.id);
       setStep(5);
     }
@@ -329,9 +351,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     type="text"
                     maxLength={100}
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    readOnly
+                    aria-readonly="true"
                     placeholder="Seu nome completo"
-                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full cursor-not-allowed rounded-xl border border-border bg-muted/60 px-3.5 py-2.5 text-sm text-muted-foreground"
                   />
                 </div>
 
@@ -381,7 +404,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     value={formData.profession}
                     onChange={(e) => setFormData({ ...formData, profession: e.target.value })}
                     placeholder="Ex: Designer, Engenheiro, Autônomo"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
 
@@ -393,9 +416,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                       inputMode="tel"
                       maxLength={15}
                       value={formData.primaryPhone}
-                      onChange={(e) => setFormData({ ...formData, primaryPhone: formatPhone(e.target.value) })}
+                      readOnly
+                      aria-readonly="true"
                       placeholder="(11) 98765-4321"
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="min-h-[44px] w-full cursor-not-allowed rounded-xl border border-border bg-muted/60 px-3.5 py-2.5 text-sm text-muted-foreground"
                     />
                   </div>
                 </div>
@@ -408,9 +432,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     type="email"
                     maxLength={100}
                     value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    readOnly
+                    aria-readonly="true"
                     placeholder="seu.email@exemplo.com"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full cursor-not-allowed rounded-xl border border-border bg-muted/60 px-3.5 py-2.5 text-sm text-muted-foreground"
                   />
                 </div>
 
@@ -422,7 +447,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     value={formData.socialMedia}
                     onChange={(e) => setFormData({ ...formData, socialMedia: e.target.value })}
                     placeholder="@seu.perfil"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -448,9 +473,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     inputMode="numeric"
                     maxLength={14}
                     value={formData.cpf}
-                    onChange={(e) => setFormData({ ...formData, cpf: formatCPF(e.target.value) })}
+                    readOnly
+                    aria-readonly="true"
                     placeholder="000.000.000-00"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full cursor-not-allowed rounded-xl border border-border bg-muted/60 px-3.5 py-2.5 text-sm text-muted-foreground"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -459,9 +485,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     type="text"
                     maxLength={12}
                     value={formData.rg}
-                    onChange={(e) => setFormData({ ...formData, rg: formatRG(e.target.value) })}
+                    readOnly
+                    aria-readonly="true"
                     placeholder="00.000.000-0"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full cursor-not-allowed rounded-xl border border-border bg-muted/60 px-3.5 py-2.5 text-sm text-muted-foreground"
                   />
                 </div>
               </div>
@@ -477,8 +504,9 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   <select
                     value={formData.housingType}
                     onChange={(e) => setFormData({ ...formData, housingType: e.target.value as "apartamento" | "casa" | "sobrado" | "sitio" })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   >
+                    <option value="" disabled>Selecione</option>
                     <option value="apartamento">Apartamento</option>
                     <option value="casa">Casa</option>
                     <option value="sobrado">Sobrado</option>
@@ -491,8 +519,9 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   <select
                     value={formData.housingStatus}
                     onChange={(e) => setFormData({ ...formData, housingStatus: e.target.value as "proprio" | "alugado" })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   >
+                    <option value="" disabled>Selecione</option>
                     <option value="proprio">Próprio</option>
                     <option value="alugado">Alugado</option>
                   </select>
@@ -500,7 +529,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
               </div>
 
               {formData.housingStatus === "alugado" && (
-                <div className="p-3.5 rounded-2xl bg-secondary/50 border border-border flex items-center justify-between">
+                <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-2xl border border-border bg-secondary/50 p-3.5">
                   <span className="text-xs font-semibold text-foreground">
                     O proprietário / condomínio autoriza a presença de animais?
                   </span>
@@ -508,14 +537,14 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     type="checkbox"
                     checked={formData.landlordPermission}
                     onChange={(e) => setFormData({ ...formData, landlordPermission: e.target.checked })}
-                    className="w-4 h-4 rounded text-primary accent-primary"
+                    className="h-4 w-4 shrink-0 rounded text-primary accent-primary"
                   />
-                </div>
+                </label>
               )}
 
               {/* Housing protection declaration */}
               <div className="p-4 rounded-2xl bg-secondary/40 border border-border space-y-3">
-                <div className="flex items-center justify-between">
+                <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3">
                   <div className="space-y-0.5">
                     <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
                       <Lock className="w-3.5 h-3.5 text-primary" />
@@ -531,9 +560,9 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     type="checkbox"
                     checked={formData.hasProtection}
                     onChange={(e) => setFormData({ ...formData, hasProtection: e.target.checked })}
-                    className="w-4 h-4 rounded text-primary accent-primary"
+                    className="h-4 w-4 shrink-0 rounded text-primary accent-primary"
                   />
-                </div>
+                </label>
 
                 <div className="space-y-1.5 pt-2">
                   <label className="text-xs font-medium text-muted-foreground">
@@ -545,7 +574,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     value={formData.protectionDetails}
                     onChange={(e) => setFormData({ ...formData, protectionDetails: e.target.value })}
                     placeholder="Ex: Telas instaladas em 100% das janelas por empresa especializada com malha 5cm."
-                    className="w-full px-3 py-2 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[88px] w-full rounded-xl border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -608,7 +637,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
               </div>
 
               <div className="p-4 rounded-2xl bg-secondary/40 border border-border space-y-3">
-                <div className="flex items-start sm:items-center justify-between gap-3">
+                <label className="flex min-h-[44px] cursor-pointer items-start justify-between gap-3 sm:items-center">
                   <div>
                     <span className="text-xs font-bold text-foreground">
                       Concordância Familiar Unânime *
@@ -621,11 +650,11 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     type="checkbox"
                     checked={formData.familyAgreement}
                     onChange={(e) => setFormData({ ...formData, familyAgreement: e.target.checked })}
-                    className="w-4 h-4 rounded text-primary accent-primary mt-1 sm:mt-0 shrink-0"
+                    className="mt-1 h-4 w-4 shrink-0 rounded text-primary accent-primary sm:mt-0"
                   />
-                </div>
+                </label>
 
-                <div className="pt-2 border-t border-border/50 flex items-center justify-between">
+                <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 border-t border-border/50 pt-2">
                   <div>
                     <span className="text-xs font-bold text-foreground">
                       Alguém na casa possui histórico de alergia a pelos?
@@ -635,9 +664,9 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     type="checkbox"
                     checked={formData.allergyCases}
                     onChange={(e) => setFormData({ ...formData, allergyCases: e.target.checked })}
-                    className="w-4 h-4 rounded text-primary accent-primary"
+                    className="h-4 w-4 shrink-0 rounded text-primary accent-primary"
                   />
-                </div>
+                </label>
 
                 {formData.allergyCases && (
                   <input
@@ -646,7 +675,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     value={formData.allergyDetails}
                     onChange={(e) => setFormData({ ...formData, allergyDetails: e.target.value })}
                     placeholder="Descreva o caso e se já há acompanhamento médico..."
-                    className="w-full px-3 py-2 rounded-xl border border-border bg-background text-xs"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
                   />
                 )}
               </div>
@@ -664,7 +693,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   max={14}
                   value={formData.hoursAlone}
                   onChange={(e) => setFormData({ ...formData, hoursAlone: Number(e.target.value) })}
-                  className="w-full accent-primary"
+                  className="min-h-[44px] w-full accent-primary"
                 />
                 <div className="flex justify-between text-[10px] text-muted-foreground">
                   <span>Sempre alguém em casa (0h)</span>
@@ -683,7 +712,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   value={formData.travelCarePlan}
                   onChange={(e) => setFormData({ ...formData, travelCarePlan: e.target.value })}
                   placeholder="Com quem ou onde o animal ficará quando a família viajar?"
-                  className="w-full px-3 py-2 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="min-h-[88px] w-full rounded-xl border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
             </div>
@@ -693,7 +722,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
           {step === 4 && (
             <div className="space-y-5">
               <div className="p-4 rounded-2xl bg-secondary/40 border border-border space-y-3">
-                <div className="flex items-center justify-between">
+                <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3">
                   <div>
                     <span className="text-xs font-bold text-foreground">
                       Você já possui outros animais em casa atualmente?
@@ -706,9 +735,9 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     type="checkbox"
                     checked={formData.hasCurrentPets}
                     onChange={(e) => setFormData({ ...formData, hasCurrentPets: e.target.checked })}
-                    className="w-4 h-4 rounded text-primary accent-primary"
+                    className="h-4 w-4 shrink-0 rounded text-primary accent-primary"
                   />
-                </div>
+                </label>
               </div>
 
               <div className="space-y-1.5">
@@ -721,7 +750,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   value={formData.previousPetsHistory}
                   onChange={(e) => setFormData({ ...formData, previousPetsHistory: e.target.value })}
                   placeholder="Já teve animais antes? Por quanto tempo viveram e quais foram os cuidados?"
-                  className="w-full px-3 py-2 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="min-h-[100px] w-full rounded-xl border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
 
@@ -738,18 +767,17 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2.5 pt-2 border-t border-primary/20">
+                <label className="flex min-h-[44px] cursor-pointer items-center gap-2.5 border-t border-primary/20 pt-2">
                   <input
                     type="checkbox"
-                    id="costAwareness"
                     checked={formData.costAwareness}
                     onChange={(e) => setFormData({ ...formData, costAwareness: e.target.checked })}
-                    className="w-4 h-4 rounded text-primary accent-primary"
+                    className="h-4 w-4 shrink-0 rounded text-primary accent-primary"
                   />
-                  <label htmlFor="costAwareness" className="text-xs font-bold text-foreground cursor-pointer">
+                  <span className="text-xs font-bold text-foreground">
                     Declaro estar plenamente ciente e preparado financeiramente para esses custos.
-                  </label>
-                </div>
+                  </span>
+                </label>
               </div>
             </div>
           )}
@@ -810,6 +838,7 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
 
             <Button
               onClick={handleNext}
+              disabled={isSubmitting}
               className="rounded-full px-6 text-xs sm:text-sm bg-primary hover:bg-primary/90 shadow-md min-h-[44px]"
             >
               {step === 0 && "Começar Dossiê"}
@@ -820,7 +849,8 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
               )}
               {step === 4 && (
                 <>
-                  <Sparkles className="w-4 h-4 mr-1.5" /> Submeter Candidatura
+                  {isSubmitting ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
+                  {isSubmitting ? "Enviando..." : "Submeter Candidatura"}
                 </>
               )}
             </Button>

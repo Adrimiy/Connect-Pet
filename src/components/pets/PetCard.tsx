@@ -39,10 +39,10 @@ export function PetCard({ pet, priority = false }: PetCardProps) {
   const mainPhoto =
     pet.photos && pet.photos.length > 0 && pet.photos[0]
       ? pet.photos[0]
-      : "https://images.unsplash.com/photo-1543466835-00a7907e9de1?q=80&w=800&auto=format&fit=crop";
+      : "/images/pet-placeholder.svg";
 
-  const temperamentList = Array.isArray(pet.temperament) ? pet.temperament : ["Dócil"];
-  const cityText = pet.location ? `${pet.location.city || "São Paulo"}, ${pet.location.state || "SP"}` : "São Paulo, SP";
+  const temperamentList = Array.isArray(pet.temperament) ? pet.temperament : [];
+  const cityText = [pet.location?.city, pet.location?.state].filter(Boolean).join(", ") || "Localização não informada";
 
   return (
     <div className="group relative flex flex-col rounded-3xl border border-border/50 bg-card overflow-hidden shadow-sm hover:shadow-xl hover:border-primary/30 transition-all duration-300 max-w-md mx-auto sm:max-w-none w-full">
@@ -91,7 +91,7 @@ export function PetCard({ pet, priority = false }: PetCardProps) {
               {pet.name}
             </h3>
             <span className="text-xs font-semibold text-white/90 bg-black/40 px-2 py-0.5 rounded-full backdrop-blur-sm">
-              {pet.approximateAge || "1 ano"}
+              {pet.approximateAge || "Idade não informada"}
             </span>
           </div>
           <p className="text-xs text-white/80 line-clamp-1 mt-0.5 font-medium">
@@ -125,7 +125,7 @@ export function PetCard({ pet, priority = false }: PetCardProps) {
 
         {/* Headline text */}
         <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2 leading-relaxed">
-          &ldquo;{pet.headline || "Resgatado com amor."}&rdquo;
+          &ldquo;{pet.headline || "Informações em atualização."}&rdquo;
         </p>
 
         {/* Temperament tags */}
@@ -147,7 +147,7 @@ export function PetCard({ pet, priority = false }: PetCardProps) {
 
         {/* Footer info: Location, Guardian & Action Link */}
         <div className="pt-3 border-t border-border/50 flex items-center justify-between mt-auto text-xs">
-          <div className="flex items-center gap-1 text-muted-foreground truncate max-w-[170px]">
+          <div className="flex max-w-40 items-center gap-1 truncate text-muted-foreground">
             <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
             <span className="truncate">{cityText}</span>
           </div>

@@ -11,7 +11,9 @@ import {
   X,
   RotateCcw,
   Heart,
-  PawPrint
+  PawPrint,
+  Loader2,
+  AlertCircle
 } from "lucide-react";
 
 interface FilterProps {
@@ -69,15 +71,15 @@ function FilterPanel({
         </h3>
         <button
           onClick={resetFilters}
-          className="text-[11px] font-semibold text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"
+          className="flex min-h-[44px] items-center gap-1 px-2 text-[11px] font-semibold text-muted-foreground transition-colors hover:text-primary"
         >
           <RotateCcw className="w-3 h-3" /> Limpar
         </button>
       </div>
 
       {/* Somente Favoritos Switch */}
-      <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-between">
-        <label htmlFor="onlyFavorites" className="text-xs font-bold text-rose-700 dark:text-rose-400 flex items-center gap-1.5 cursor-pointer">
+      <div className="min-h-[44px] p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-between">
+        <label htmlFor="onlyFavorites" className="flex min-h-[44px] items-center gap-1.5 text-xs font-bold text-rose-700 cursor-pointer dark:text-rose-400">
           <Heart className="w-4 h-4 fill-current" /> Somente Meus Favoritos
         </label>
         <input
@@ -97,7 +99,7 @@ function FilterPanel({
             <button
               key={item}
               onClick={() => setSpecies(item)}
-              className={`py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+              className={`flex min-h-[44px] items-center justify-center rounded-xl px-3 py-2 text-xs font-semibold transition-all ${
                 species === item
                   ? "bg-primary text-primary-foreground font-bold shadow-sm"
                   : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -122,7 +124,7 @@ function FilterPanel({
             <button
               key={item.id}
               onClick={() => setSize(item.id)}
-              className={`py-2 px-2 rounded-xl text-xs font-semibold text-center transition-all min-h-[38px] flex items-center justify-center ${
+              className={`py-2 px-2 rounded-xl text-xs font-semibold text-center transition-all min-h-[44px] flex items-center justify-center ${
                 size === item.id
                   ? "bg-primary text-primary-foreground font-bold shadow-sm"
                   : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -146,7 +148,7 @@ function FilterPanel({
             <button
               key={item.id}
               onClick={() => setSex(item.id)}
-              className={`py-2 px-3 rounded-xl text-xs font-semibold transition-all min-h-[38px] flex items-center justify-center ${
+              className={`py-2 px-3 rounded-xl text-xs font-semibold transition-all min-h-[44px] flex items-center justify-center ${
                 sex === item.id
                   ? "bg-primary text-primary-foreground font-bold shadow-sm"
                   : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -172,7 +174,7 @@ function FilterPanel({
             <button
               key={item.id}
               onClick={() => setAgeCategory(item.id)}
-              className={`py-2 px-3 rounded-xl text-xs font-semibold text-center transition-all min-h-[38px] flex items-center justify-center ${
+              className={`py-2 px-3 rounded-xl text-xs font-semibold text-center transition-all min-h-[44px] flex items-center justify-center ${
                 ageCategory === item.id
                   ? "bg-primary text-primary-foreground font-bold shadow-sm"
                   : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -193,7 +195,7 @@ function FilterPanel({
           className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs sm:text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
         >
           <option value="all">Todos os Doadores</option>
-          <option value="ngo">Apenas ONGs Verificadas</option>
+          <option value="ngo">Apenas ONGs</option>
           <option value="individual">Protetores Independentes</option>
         </select>
       </div>
@@ -221,7 +223,7 @@ function FilterPanel({
       <div className="space-y-2.5 pt-2 border-t border-border/50">
         <label className="text-xs font-bold text-foreground uppercase tracking-wider">Saúde Veterinária</label>
         
-        <label className="flex items-center gap-2 text-xs text-foreground font-medium cursor-pointer">
+        <label className="flex min-h-[44px] items-center gap-2 text-xs text-foreground font-medium cursor-pointer">
           <input
             type="checkbox"
             checked={onlyCastrated}
@@ -231,7 +233,7 @@ function FilterPanel({
           Somente Animais Castrados
         </label>
 
-        <label className="flex items-center gap-2 text-xs text-foreground font-medium cursor-pointer">
+        <label className="flex min-h-[44px] items-center gap-2 text-xs text-foreground font-medium cursor-pointer">
           <input
             type="checkbox"
             checked={onlyVaccinated}
@@ -248,7 +250,7 @@ function FilterPanel({
 
 export function CatalogView() {
   const searchParams = useSearchParams();
-  const { pets, favorites, showFavoritesOnly, setShowFavoritesOnly, currentUser, requireAuth } = useApp();
+  const { pets, petsLoading, petsError, reloadPets, favorites, showFavoritesOnly, setShowFavoritesOnly, currentUser, requireAuth } = useApp();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [species, setSpecies] = useState("all");
@@ -380,7 +382,7 @@ export function CatalogView() {
             Catálogo de Animais para Adoção
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-            {filteredPets.length} {filteredPets.length === 1 ? "pet disponível encontrado" : "pets disponíveis encontrados"} com acompanhamento veterinário completo.
+            {filteredPets.length} {filteredPets.length === 1 ? "animal encontrado" : "animais encontrados"} no catálogo de adoção responsável.
           </p>
         </div>
 
@@ -398,7 +400,7 @@ export function CatalogView() {
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 min-h-[36px] min-w-[36px] flex items-center justify-center text-muted-foreground hover:text-foreground"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 min-h-[44px] min-w-[44px] flex items-center justify-center text-muted-foreground hover:text-foreground"
                 aria-label="Limpar busca"
               >
                 <X className="w-3.5 h-3.5" />
@@ -495,7 +497,23 @@ export function CatalogView() {
 
         {/* Pet Cards Grid */}
         <section className="lg:col-span-3 space-y-6">
-          {filteredPets.length === 0 ? (
+          {petsLoading ? (
+            <div className="flex min-h-64 items-center justify-center rounded-3xl border border-border/60 bg-card">
+              <div className="space-y-3 text-center text-muted-foreground">
+                <Loader2 className="mx-auto h-7 w-7 animate-spin text-primary" />
+                <p className="text-sm">Carregando animais...</p>
+              </div>
+            </div>
+          ) : petsError ? (
+            <div role="alert" className="space-y-4 rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center sm:p-10">
+              <AlertCircle className="mx-auto h-8 w-8 text-destructive" />
+              <div>
+                <h3 className="font-bold text-foreground">Catálogo indisponível</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{petsError}</p>
+              </div>
+              <Button onClick={() => void reloadPets()} variant="outline" className="min-h-[44px] rounded-full">Tentar novamente</Button>
+            </div>
+          ) : filteredPets.length === 0 ? (
             <div className="p-12 rounded-3xl bg-secondary/30 border border-border/60 text-center space-y-4">
               <div className="w-16 h-16 rounded-full bg-secondary text-muted-foreground mx-auto flex items-center justify-center">
                 <PawPrint className="w-8 h-8 opacity-60" />
@@ -503,12 +521,12 @@ export function CatalogView() {
               <div className="space-y-1">
                 <h3 className="font-bold text-lg text-foreground">Nenhum animal encontrado</h3>
                 <p className="text-xs sm:text-sm text-muted-foreground max-w-sm mx-auto">
-                  Tente alterar seus termos de busca ou remover alguns filtros acumulativos para visualizar outros pets.
+                  {pets.length === 0
+                    ? "Ainda não há animais publicados para adoção. Volte em breve."
+                    : "Tente alterar seus termos de busca ou remover alguns filtros acumulativos para visualizar outros pets."}
                 </p>
               </div>
-              <Button onClick={resetFilters} variant="outline" className="rounded-full text-xs">
-                Limpar Todos os Filtros
-              </Button>
+              {pets.length > 0 && <Button onClick={resetFilters} variant="outline" className="min-h-[44px] rounded-full text-xs">Limpar Todos os Filtros</Button>}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">

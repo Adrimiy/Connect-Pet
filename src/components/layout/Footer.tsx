@@ -80,8 +80,8 @@ export function Footer() {
         <div className="pt-4 border-t border-sky-300/40 flex flex-col sm:flex-row items-center justify-between text-xs text-sky-950 font-medium gap-3">
           <p>© 2026 ConnectPet • Adoção Consciente e Responsável. Todos os direitos reservados.</p>
           <div className="flex items-center gap-6 text-[11px] text-sky-900/80">
-            <span className="hover:text-sky-950 cursor-pointer transition-colors">Privacidade & LGPD</span>
-            <span className="hover:text-sky-950 cursor-pointer transition-colors">Termos de Uso</span>
+            <span>Privacidade &amp; LGPD</span>
+            <span>Termos de Uso</span>
             <span className="flex items-center gap-1">
               <Heart className="w-3 h-3 text-rose-500 fill-rose-500" /> Salve Vidas
             </span>

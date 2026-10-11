@@ -6,11 +6,7 @@ import Link from "next/link";
 import { useApp } from "@/context/AppContext";
 import {
   ApplicationStatus,
-  PetAdoptionStatus,
-  PetSpecies,
-  PetSize,
-  PetSex,
-  PetAgeCategory
+  PetAdoptionStatus
 } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,36 +24,35 @@ import {
   ShieldCheck,
   Sparkles,
   Building2,
-  X,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Pencil
 } from "lucide-react";
-import { PetPhotoUploader } from "@/components/pets/PetPhotoUploader";
-import { FotoPet, enviarFotosPet } from "@/lib/petPhotos";
 
 export function GuardianDashboardView() {
   const {
     currentUser,
+    authLoading,
     pets,
-    addPet,
+    petsLoading,
+    petsError,
+    reloadPets,
     updatePet,
     deletePet,
     applications,
+    applicationsLoading,
+    applicationsError,
+    reloadApplications,
     updateApplicationStatus,
     updateGuardianNotes,
-    sendApplicationMessage,
-    showToast
+    sendApplicationMessage
   } = useApp();
 
   const isGuardian = currentUser?.role === "guardian";
 
   const guardianPets = useMemo(() => {
     if (!currentUser) return [];
-    return pets.filter(
-      (p) =>
-        p.guardianId === currentUser.id ||
-        (currentUser.email ? p.guardianEmail === currentUser.email : false)
-    );
+    return pets.filter((pet) => pet.guardianId === currentUser.id);
   }, [pets, currentUser]);
 
   const guardianPetIds = useMemo(() => new Set(guardianPets.map((p) => p.id)), [guardianPets]);
@@ -72,6 +67,8 @@ export function GuardianDashboardView() {
   const [activeTab, setActiveTab] = useState<"animals" | "applications" | "metrics">("animals");
   const [searchAnimal, setSearchAnimal] = useState("");
   const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
+  const [petIdParaExcluir, setPetIdParaExcluir] = useState<string | null>(null);
+  const [estaExcluindoPet, setEstaExcluindoPet] = useState(false);
 
   const selectedApplication = useMemo(() => {
     if (guardianApplications.length === 0) return null;
@@ -87,38 +84,7 @@ export function GuardianDashboardView() {
   const activeNote = selectedApplication
     ? (editingNotes[selectedApplication.id] ?? selectedApplication.guardianNotes ?? "")
     : "";
-
-
-  // Modal State for New Pet
-  const [isAddPetModalOpen, setIsAddPetModalOpen] = useState(false);
-  const [newPetForm, setNewPetForm] = useState({
-    name: "",
-    species: "dog" as "dog" | "cat",
-    breed: "Vira-lata (SRD)",
-    size: "medium" as "small" | "medium" | "large",
-    approximateAge: "1 ano",
-    ageCategory: "young" as "puppy" | "young" | "adult" | "senior",
-    sex: "male" as "male" | "female",
-    vaccinated: true,
-    castrated: true,
-    dewormed: true,
-    vaccinationDetails: "Vacinas V10 e Raiva em dia.",
-    specialNeeds: "",
-    headline: "Companheiro alegre e cheio de energia para brincar.",
-    story: "Resgatado de situação de risco, recebeu todos os tratamentos veterinários e agora busca uma família definitiva.",
-    temperament: "Dócil, Brincalhão, Sociável",
-    temperamentDescription: "Convive bem com outros animais e adora pessoas."
-  });
-  const [newPetFotos, setNewPetFotos] = useState<FotoPet[]>([]);
-  const [isSavingPet, setIsSavingPet] = useState(false);
-  const [newPetFotosError, setNewPetFotosError] = useState<string | null>(null);
-
-  const closeAddPetModal = () => {
-    if (isSavingPet) return;
-    setIsAddPetModalOpen(false);
-    setNewPetFotos([]);
-    setNewPetFotosError(null);
-  };
+  const petParaExcluir = guardianPets.find((pet) => pet.id === petIdParaExcluir) || null;
 
   // Filtered animals
   const filteredPets = guardianPets.filter((p) =>
@@ -135,82 +101,29 @@ export function GuardianDashboardView() {
     completed: { label: "Adoção Concluída", className: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30" }
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedApplication || !chatMessage.trim()) return;
-    sendApplicationMessage(selectedApplication.id, chatMessage);
-    setChatMessage("");
+    if (await sendApplicationMessage(selectedApplication.id, chatMessage)) setChatMessage("");
   };
 
-  const handleSaveNotes = () => {
+  const handleSaveNotes = async () => {
     if (!selectedApplication) return;
-    updateGuardianNotes(selectedApplication.id, activeNote);
-    showToast("Anotação Salva", "Anotações internas atualizadas com sucesso.", "success");
+    await updateGuardianNotes(selectedApplication.id, activeNote);
   };
 
-  const handleCreatePet = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (isSavingPet) return;
-    if (!newPetForm.name.trim()) {
-      showToast("Atenção", "Preencha o nome do animal.", "warning");
-      return;
-    }
-
-    setNewPetFotosError(null);
-    setIsSavingPet(true);
-    let photoList: string[];
-    try {
-      photoList = await enviarFotosPet(newPetFotos, setNewPetFotos);
-    } catch (err) {
-      setNewPetFotosError(err instanceof Error ? err.message : "Não foi possível enviar as fotos.");
-      setIsSavingPet(false);
-      return;
-    }
-
-    const temperamentTags = newPetForm.temperament
-      .split(",")
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0);
-
-    const guardianProfile = currentUser?.role === "guardian" ? currentUser : null;
-
-    addPet({
-      name: newPetForm.name,
-      species: newPetForm.species,
-      breed: newPetForm.breed,
-      size: newPetForm.size,
-      approximateAge: newPetForm.approximateAge,
-      ageCategory: newPetForm.ageCategory,
-      sex: newPetForm.sex,
-      status: "available",
-      vaccinated: newPetForm.vaccinated,
-      castrated: newPetForm.castrated,
-      dewormed: newPetForm.dewormed,
-      vaccinationDetails: newPetForm.vaccinationDetails,
-      specialNeeds: newPetForm.specialNeeds,
-      photos: photoList.length > 0 ? photoList : ["https://images.unsplash.com/photo-1543466835-00a7907e9de1?q=80&w=1000&auto=format&fit=crop"],
-      headline: newPetForm.headline,
-      story: newPetForm.story,
-      temperament: temperamentTags.length > 0 ? temperamentTags : ["Dócil", "Carinhoso"],
-      temperamentDescription: newPetForm.temperamentDescription,
-      guardianId: currentUser?.id || "guardian-1",
-      guardianName: currentUser?.name || "ONG / Protetor",
-      guardianType: guardianProfile?.guardianType || "ngo",
-      guardianPhone: currentUser?.primaryPhone || "(11) 97123-9988",
-      guardianEmail: currentUser?.email || "contato@patinhascomamor.org.br",
-      location: {
-        city: guardianProfile?.city || "São Paulo",
-        state: guardianProfile?.state || "SP",
-        neighborhood: guardianProfile?.neighborhood || "Centro"
-      }
-    });
-
-    setIsSavingPet(false);
-    setIsAddPetModalOpen(false);
-    setNewPetFotos([]);
+  const handleDeletePet = async () => {
+    if (!petIdParaExcluir || estaExcluindoPet) return;
+    setEstaExcluindoPet(true);
+    if (await deletePet(petIdParaExcluir)) setPetIdParaExcluir(null);
+    setEstaExcluindoPet(false);
   };
 
-  if (!currentUser) {
+  if (authLoading) {
+    return <div className="flex min-h-[70vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando painel" /></div>;
+  }
+
+  if (!currentUser || !isGuardian) {
     return (
       <div className="container mx-auto px-4 py-20 min-h-[70vh] flex items-center justify-center">
         <div className="p-10 rounded-3xl bg-card border border-border text-center space-y-4 max-w-md shadow-xl">
@@ -218,7 +131,7 @@ export function GuardianDashboardView() {
           <div className="space-y-1">
             <h2 className="font-serif text-2xl font-bold text-foreground">Acesso ao Painel da ONG</h2>
             <p className="text-xs text-muted-foreground">
-              Você precisa estar conectado à sua conta de ONG ou Protetor para gerenciar animais e candidaturas.
+              Você precisa estar conectado com uma conta de ONG ou doador para gerenciar animais e candidaturas.
             </p>
           </div>
           <div className="pt-2">
@@ -236,6 +149,15 @@ export function GuardianDashboardView() {
   const inProcessPets = guardianPets.filter((p) => p.status === "in_process").length;
   const adoptedPets = guardianPets.filter((p) => p.status === "adopted").length;
   const pendingApps = guardianApplications.filter((a) => a.status === "pending").length;
+  const now = new Date();
+  const petsThisMonth = guardianPets.filter((pet) => {
+    const createdAt = new Date(pet.createdAt);
+    return !Number.isNaN(createdAt.getTime())
+      && createdAt.getMonth() === now.getMonth()
+      && createdAt.getFullYear() === now.getFullYear();
+  }).length;
+  const adoptionRate = totalPets > 0 ? Math.round((adoptedPets / totalPets) * 100) : null;
+  const petsWithRegisteredCare = guardianPets.filter((pet) => pet.vaccinated && pet.castrated).length;
 
   return (
     <div className="container mx-auto px-4 sm:px-8 py-6 sm:py-10 md:py-16 min-h-screen space-y-6 sm:space-y-8">
@@ -260,11 +182,10 @@ export function GuardianDashboardView() {
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Button
-            onClick={() => setIsAddPetModalOpen(true)}
-            className="rounded-full text-xs font-bold bg-primary hover:bg-primary/90 shadow-md min-h-[44px] w-full sm:w-auto"
-          >
-            <Plus className="w-4 h-4 mr-1.5" /> Cadastrar Novo Pet
+          <Button asChild className="rounded-full text-xs font-bold bg-primary hover:bg-primary/90 shadow-md min-h-[44px] w-full sm:w-auto">
+            <Link href="/dashboard/pets/novo">
+              <Plus className="w-4 h-4 mr-1.5" /> Cadastrar Novo Pet
+            </Link>
           </Button>
         </div>
       </div>
@@ -303,7 +224,24 @@ export function GuardianDashboardView() {
       </div>
 
       {/* TAB 1: TRIAGEM DE CANDIDATURAS */}
-      {activeTab === "applications" && (
+      {activeTab === "applications" && applicationsLoading && (
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando candidaturas" />
+        </div>
+      )}
+
+      {activeTab === "applications" && !applicationsLoading && applicationsError && (
+        <div role="alert" className="space-y-4 rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center sm:p-10">
+          <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
+          <div>
+            <h3 className="font-bold text-foreground">Candidaturas indisponíveis</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{applicationsError}</p>
+          </div>
+          <Button variant="outline" onClick={reloadApplications} className="rounded-full">Tentar novamente</Button>
+        </div>
+      )}
+
+      {activeTab === "applications" && !applicationsLoading && !applicationsError && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
 
           {/* Applications List (4 Cols) */}
@@ -512,7 +450,7 @@ export function GuardianDashboardView() {
                     </label>
                     <button
                       onClick={handleSaveNotes}
-                      className="text-xs font-bold text-primary hover:underline"
+                      className="min-h-[44px] px-2 text-xs font-bold text-primary hover:underline"
                     >
                       Salvar Nota
                     </button>
@@ -610,7 +548,24 @@ export function GuardianDashboardView() {
       )}
 
       {/* TAB 2: GESTÃO DE ANIMAIS */}
-      {activeTab === "animals" && (
+      {activeTab === "animals" && petsLoading && (
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando animais" />
+        </div>
+      )}
+
+      {activeTab === "animals" && !petsLoading && petsError && (
+        <div role="alert" className="space-y-4 rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center sm:p-10">
+          <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
+          <div>
+            <h3 className="font-bold text-foreground">Animais indisponíveis</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{petsError}</p>
+          </div>
+          <Button variant="outline" onClick={() => void reloadPets()} className="rounded-full">Tentar novamente</Button>
+        </div>
+      )}
+
+      {activeTab === "animals" && !petsLoading && !petsError && (
         <div className="space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="relative w-full sm:w-80">
@@ -620,15 +575,14 @@ export function GuardianDashboardView() {
                 value={searchAnimal}
                 onChange={(e) => setSearchAnimal(e.target.value)}
                 placeholder="Buscar animal por nome ou raça..."
-                className="w-full pl-10 pr-4 py-2 rounded-full border border-border bg-card text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                className="min-h-[44px] w-full rounded-full border border-border bg-card py-2 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
 
-            <Button
-              onClick={() => setIsAddPetModalOpen(true)}
-              className="rounded-full text-xs bg-primary hover:bg-primary/90"
-            >
-              <Plus className="w-4 h-4 mr-1.5" /> Novo Pet
+            <Button asChild className="rounded-full text-xs bg-primary hover:bg-primary/90">
+              <Link href="/dashboard/pets/novo">
+                <Plus className="w-4 h-4 mr-1.5" /> Novo Pet
+              </Link>
             </Button>
           </div>
 
@@ -643,11 +597,10 @@ export function GuardianDashboardView() {
                   Esta conta de ONG ainda não possui pets cadastrados para adoção. Cadastre novos animais para começar a receber candidaturas de adoção responsável.
                 </p>
               </div>
-              <Button
-                onClick={() => setIsAddPetModalOpen(true)}
-                className="rounded-full text-xs bg-primary hover:bg-primary/90"
-              >
-                <Plus className="w-4 h-4 mr-1.5" /> Cadastrar Primeiro Pet
+              <Button asChild className="rounded-full text-xs bg-primary hover:bg-primary/90">
+                <Link href="/dashboard/pets/novo">
+                  <Plus className="w-4 h-4 mr-1.5" /> Cadastrar Primeiro Pet
+                </Link>
               </Button>
             </div>
           ) : filteredPets.length === 0 ? (
@@ -673,15 +626,18 @@ export function GuardianDashboardView() {
                     </div>
 
                     <div className="space-y-1 flex-1">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-start justify-between gap-2">
                         <h4 className="font-bold text-base text-foreground">{pet.name}</h4>
-                        <button
-                          onClick={() => deletePet(pet.id)}
-                          className="text-muted-foreground hover:text-rose-500 p-1"
-                          title="Remover animal"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button asChild variant="ghost" size="icon-sm" className="min-h-[44px] min-w-[44px]" title="Editar animal">
+                            <Link href={`/dashboard/pets/${pet.id}/editar`} aria-label={`Editar ${pet.name}`}>
+                              <Pencil className="w-4 h-4" />
+                            </Link>
+                          </Button>
+                          <button onClick={() => setPetIdParaExcluir(pet.id)} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-rose-500" title="Remover animal" aria-label={`Remover ${pet.name}`}>
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                       <p className="text-xs text-muted-foreground">{pet.breed} &bull; {pet.approximateAge}</p>
                       <p className="text-xs text-muted-foreground">
@@ -691,12 +647,12 @@ export function GuardianDashboardView() {
                   </div>
 
                   {/* Status selector */}
-                  <div className="pt-2 border-t border-border/40 flex items-center justify-between">
+                  <div className="flex flex-col gap-2 border-t border-border/40 pt-2 sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-xs font-semibold text-muted-foreground">Status Atual:</span>
                     <select
                       value={pet.status}
                       onChange={(e) => updatePet(pet.id, { status: e.target.value as PetAdoptionStatus })}
-                      className="px-2.5 py-1 rounded-xl border border-border bg-background text-xs font-bold text-foreground focus:outline-none"
+                      className="min-h-[44px] w-full rounded-xl border border-border bg-background px-2.5 py-1 text-xs font-bold text-foreground focus:outline-none sm:w-auto"
                     >
                       <option value="available">Disponível</option>
                       <option value="in_process">Em Processo</option>
@@ -711,14 +667,31 @@ export function GuardianDashboardView() {
       )}
 
       {/* TAB 3: MÉTRICAS */}
-      {activeTab === "metrics" && (
+      {activeTab === "metrics" && petsLoading && (
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando métricas" />
+        </div>
+      )}
+
+      {activeTab === "metrics" && !petsLoading && petsError && (
+        <div role="alert" className="space-y-4 rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center sm:p-10">
+          <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
+          <div>
+            <h3 className="font-bold text-foreground">Métricas indisponíveis</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{petsError}</p>
+          </div>
+          <Button variant="outline" onClick={() => void reloadPets()} className="rounded-full">Tentar novamente</Button>
+        </div>
+      )}
+
+      {activeTab === "metrics" && !petsLoading && !petsError && (
         <div className="space-y-6 sm:space-y-8">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
             <div className="p-4 sm:p-6 rounded-3xl bg-card border border-border/60 shadow-sm space-y-1">
               <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Pets Acolhidos</span>
               <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{totalPets}</p>
               <p className="text-xs text-emerald-600 font-medium">
-                {totalPets > 0 ? "+2 cadastrados este mês" : "Nenhum animal ativo"}
+                {petsThisMonth > 0 ? `${petsThisMonth} cadastrado${petsThisMonth > 1 ? "s" : ""} neste mês` : "Nenhum cadastro neste mês"}
               </p>
             </div>
 
@@ -726,7 +699,7 @@ export function GuardianDashboardView() {
               <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Adoções Concluídas</span>
               <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{adoptedPets}</p>
               <p className="text-xs text-emerald-600 font-medium">
-                {adoptedPets > 0 ? "100% lares seguros" : "Aguardando primeiros resgates"}
+                {adoptedPets > 0 ? `${adoptedPets} adoção${adoptedPets > 1 ? "ões" : ""} registrada${adoptedPets > 1 ? "s" : ""}` : "Nenhuma adoção concluída"}
               </p>
             </div>
 
@@ -740,225 +713,35 @@ export function GuardianDashboardView() {
 
             <div className="p-4 sm:p-6 rounded-3xl bg-card border border-border/60 shadow-sm space-y-1">
               <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Taxa de Sucesso</span>
-              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{totalPets > 0 ? "98.5%" : "—"}</p>
-              <p className="text-xs text-muted-foreground font-medium">Graças à triagem das telas</p>
+              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{adoptionRate === null ? "—" : `${adoptionRate}%`}</p>
+              <p className="text-xs text-muted-foreground font-medium">Adoções concluídas sobre pets cadastrados</p>
             </div>
           </div>
 
           <div className="p-5 sm:p-8 rounded-3xl bg-secondary/30 border border-border/60 space-y-4">
             <h3 className="font-bold text-lg text-foreground flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-primary" /> Conformidade com os Padrões ConnectPet
+              <ShieldCheck className="w-5 h-5 text-primary" /> Cuidados cadastrados
             </h3>
             <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed max-w-3xl">
-              Sua instituição cumpre com excelência todos os requisitos do protocolo de guarda responsável: 100% dos animais maiores de 6 meses são encaminhados castrados, vacinados e apenas para residências comprovadamente seguras.
+              {totalPets > 0
+                ? `${petsWithRegisteredCare} de ${totalPets} animais estão marcados como vacinados e castrados. Revise os cadastros sempre que houver atualização veterinária.`
+                : "Cadastre animais para acompanhar aqui os cuidados veterinários informados."}
             </p>
           </div>
         </div>
       )}
 
-      {/* MODAL: CADASTRO DE NOVO PET */}
-      {isAddPetModalOpen && (
-        <div className="fixed inset-0 z-[999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="relative w-full max-w-xl bg-card rounded-3xl border border-border shadow-2xl p-6 sm:p-8 space-y-5 my-8 max-h-[90vh] overflow-y-auto animate-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <h3 className="font-serif text-2xl font-bold text-foreground">Cadastrar Novo Pet</h3>
-              <button
-                onClick={closeAddPetModal}
-                disabled={isSavingPet}
-                className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full hover:bg-secondary text-muted-foreground"
-                aria-label="Fechar cadastro"
-              >
-                <X className="w-5 h-5" />
-              </button>
+      {petParaExcluir && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="titulo-excluir-pet">
+          <div className="w-full max-w-sm space-y-4 rounded-3xl border border-border bg-card p-6 shadow-2xl">
+            <h2 id="titulo-excluir-pet" className="font-serif text-xl font-bold text-foreground">Remover {petParaExcluir.name}?</h2>
+            <p className="text-sm leading-relaxed text-muted-foreground">O anúncio e suas fotos serão removidos. Esta ação não pode ser desfeita.</p>
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <Button variant="outline" disabled={estaExcluindoPet} onClick={() => setPetIdParaExcluir(null)}>Cancelar</Button>
+              <Button variant="destructive" disabled={estaExcluindoPet} onClick={handleDeletePet}>
+                {estaExcluindoPet ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Removendo...</> : "Remover"}
+              </Button>
             </div>
-
-            <form onSubmit={handleCreatePet} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Nome do Animal *</label>
-                  <input
-                    type="text"
-                    required
-                    value={newPetForm.name}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, name: e.target.value })}
-                    placeholder="Ex: Tobi"
-                    className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Espécie *</label>
-                  <select
-                    value={newPetForm.species}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, species: e.target.value as PetSpecies })}
-                    className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs cursor-pointer"
-                  >
-                    <option value="dog">Cachorro</option>
-                    <option value="cat">Gato</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Raça</label>
-                  <input
-                    type="text"
-                    value={newPetForm.breed}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, breed: e.target.value })}
-                    className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Porte</label>
-                  <select
-                    value={newPetForm.size}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, size: e.target.value as PetSize })}
-                    className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs cursor-pointer"
-                  >
-                    <option value="small">Pequeno</option>
-                    <option value="medium">Médio</option>
-                    <option value="large">Grande</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Sexo</label>
-                  <select
-                    value={newPetForm.sex}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, sex: e.target.value as PetSex })}
-                    className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs cursor-pointer"
-                  >
-                    <option value="male">Macho</option>
-                    <option value="female">Fêmea</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Idade Aproximada</label>
-                  <input
-                    type="text"
-                    value={newPetForm.approximateAge}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, approximateAge: e.target.value })}
-                    placeholder="Ex: 1 ano e meio"
-                    className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Faixa Etária</label>
-                  <select
-                    value={newPetForm.ageCategory}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, ageCategory: e.target.value as PetAgeCategory })}
-                    className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs cursor-pointer"
-                  >
-                    <option value="puppy">Filhote</option>
-                    <option value="young">Jovem</option>
-                    <option value="adult">Adulto</option>
-                    <option value="senior">Sênior</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-4 p-3 rounded-2xl bg-secondary/50">
-                <label className="flex items-center gap-2 cursor-pointer min-h-[38px]">
-                  <input
-                    type="checkbox"
-                    checked={newPetForm.vaccinated}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, vaccinated: e.target.checked })}
-                    className="w-4 h-4 rounded accent-primary"
-                  />
-                  Vacinado
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer min-h-[38px]">
-                  <input
-                    type="checkbox"
-                    checked={newPetForm.castrated}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, castrated: e.target.checked })}
-                    className="w-4 h-4 rounded accent-primary"
-                  />
-                  Castrado
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer min-h-[38px]">
-                  <input
-                    type="checkbox"
-                    checked={newPetForm.dewormed}
-                    onChange={(e) => setNewPetForm({ ...newPetForm, dewormed: e.target.checked })}
-                    className="w-4 h-4 rounded accent-primary"
-                  />
-                  Vermifugado
-                </label>
-              </div>
-
-              <div className="space-y-2">
-                <label className="font-bold text-foreground">Fotos do Animal</label>
-                <PetPhotoUploader fotos={newPetFotos} onChange={setNewPetFotos} disabled={isSavingPet} />
-                {newPetFotosError && (
-                  <div
-                    role="alert"
-                    className="flex gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300"
-                  >
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span className="min-w-0 break-words">{newPetFotosError}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-1">
-                <label className="font-bold text-foreground">Frase de Destaque</label>
-                <input
-                  type="text"
-                  value={newPetForm.headline}
-                  onChange={(e) => setNewPetForm({ ...newPetForm, headline: e.target.value })}
-                  className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="font-bold text-foreground">História do Resgate</label>
-                <textarea
-                  rows={2}
-                  value={newPetForm.story}
-                  onChange={(e) => setNewPetForm({ ...newPetForm, story: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-border bg-background text-xs"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="font-bold text-foreground">Temperamento (separado por vírgulas)</label>
-                <input
-                  type="text"
-                  value={newPetForm.temperament}
-                  onChange={(e) => setNewPetForm({ ...newPetForm, temperament: e.target.value })}
-                  placeholder="Dócil, Brincalhão, Calmo"
-                  className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-border bg-background text-xs"
-                />
-              </div>
-
-              <div className="pt-2 flex flex-col sm:flex-row justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={isSavingPet}
-                  onClick={closeAddPetModal}
-                  className="rounded-full min-h-[44px]"
-                >
-                  Cancelar
-                </Button>
-                <Button type="submit" disabled={isSavingPet} className="rounded-full bg-primary hover:bg-primary/90 min-h-[44px]">
-                  {isSavingPet ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Salvando...
-                    </>
-                  ) : (
-                    "Salvar e Publicar"
-                  )}
-                </Button>
-              </div>
-            </form>
           </div>
         </div>
       )}

@@ -37,6 +37,12 @@ import {
   validateFullName
 } from "@/lib/validation";
 
+const ESTADOS_BRASILEIROS = [
+  "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
+  "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN",
+  "RS", "RO", "RR", "SC", "SP", "SE", "TO"
+];
+
 export function RegisterView() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -57,16 +63,18 @@ export function RegisterView() {
   const [adopterPassword, setAdopterPassword] = useState("");
 
   // Guardian Form
+  const [guardianType, setGuardianType] = useState<"ngo" | "individual">("ngo");
   const [ngoName, setNgoName] = useState("");
   const [ngoEmail, setNgoEmail] = useState("");
   const [ngoDocument, setNgoDocument] = useState("");
-  const [ngoCity, setNgoCity] = useState("São Paulo");
+  const [ngoCity, setNgoCity] = useState("");
+  const [ngoState, setNgoState] = useState("");
+  const [ngoPhone, setNgoPhone] = useState("");
   const [ngoPassword, setNgoPassword] = useState("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successInfo, setSuccessInfo] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,7 +86,6 @@ export function RegisterView() {
     isSubmittingRef.current = true;
     setIsSubmitting(true);
     setErrorMessage(null);
-    setSuccessInfo(null);
 
     try {
       const supabase = createClient();
@@ -156,8 +163,11 @@ export function RegisterView() {
         }
       } else {
         // Validações robustas para Guardião / ONG / Doador
-        if (!ngoName.trim() || ngoName.trim().length < 3) {
-          const msg = "Por favor, informe o nome da ONG ou Instituição (mínimo 3 caracteres).";
+        const guardianNameValidation = guardianType === "individual"
+          ? validateFullName(ngoName, "Nome completo")
+          : { valid: ngoName.trim().length >= 3, error: "Informe o nome da ONG ou instituição (mínimo 3 caracteres)." };
+        if (!guardianNameValidation.valid) {
+          const msg = guardianNameValidation.error || "Por favor, informe o nome do responsável.";
           setErrorMessage(msg);
           showToast("Atenção", msg, "warning");
           isSubmittingRef.current = false;
@@ -165,9 +175,11 @@ export function RegisterView() {
           return;
         }
 
-        const cnpjValidation = validateCNPJ(ngoDocument);
-        if (!cnpjValidation.valid) {
-          const msg = cnpjValidation.error || "CNPJ inválido. Verifique os números digitados.";
+        const documentValidation = guardianType === "ngo"
+          ? validateCNPJ(ngoDocument)
+          : validateCPF(ngoDocument);
+        if (!documentValidation.valid) {
+          const msg = documentValidation.error || `${guardianType === "ngo" ? "CNPJ" : "CPF"} inválido. Verifique os números digitados.`;
           setErrorMessage(msg);
           showToast("Atenção", msg, "warning");
           isSubmittingRef.current = false;
@@ -184,8 +196,26 @@ export function RegisterView() {
           return;
         }
 
+        if (!ESTADOS_BRASILEIROS.includes(ngoState)) {
+          const msg = "Por favor, selecione o estado de atuação.";
+          setErrorMessage(msg);
+          showToast("Atenção", msg, "warning");
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (!isValidPhone(ngoPhone)) {
+          const msg = "WhatsApp/Celular inválido. Informe o DDD e o número completo.";
+          setErrorMessage(msg);
+          showToast("Atenção", msg, "warning");
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
+          return;
+        }
+
         if (!isValidEmail(targetEmail)) {
-          const msg = "Por favor, informe um endereço de e-mail institucional válido.";
+          const msg = "Por favor, informe um endereço de e-mail válido.";
           setErrorMessage(msg);
           showToast("Atenção", msg, "warning");
           isSubmittingRef.current = false;
@@ -215,14 +245,13 @@ export function RegisterView() {
           }
         : {
             role: "guardian",
-            guardianType: "ngo",
+            guardianType,
             name: ngoName.trim(),
             document: ngoDocument.trim(),
-            primaryPhone: "(11) 99888-7766",
+            primaryPhone: ngoPhone.trim(),
             city: ngoCity.trim(),
-            state: "SP",
-            neighborhood: "Centro",
-            verified: true
+            state: ngoState,
+            neighborhood: ""
           };
 
       // 1. Criar usuário no Supabase Auth (apenas uma chamada única)
@@ -265,30 +294,8 @@ export function RegisterView() {
       }
 
       if (data.user) {
-        // 2. Persistir perfil na tabela profiles se disponível
-        try {
-          await supabase.from("profiles").upsert({
-            id: data.user.id,
-            role: roleTab,
-            name: isAdopterRole ? adopterName.trim() : ngoName.trim(),
-            email: targetEmail,
-            primary_phone: isAdopterRole ? adopterPhone.trim() : "(11) 99888-7766",
-            avatar: null,
-            cpf: isAdopterRole ? adopterCpf.trim() : undefined,
-            birth_date: isAdopterRole ? adopterBirthDate : undefined,
-            profession: isAdopterRole ? adopterProfession.trim() : undefined,
-            social_media: isAdopterRole ? (adopterSocialMedia.trim() || null) : null,
-            guardian_type: isAdopterRole ? undefined : "ngo",
-            document: isAdopterRole ? undefined : ngoDocument.trim(),
-            city: isAdopterRole ? undefined : ngoCity.trim(),
-            state: isAdopterRole ? undefined : "SP",
-            neighborhood: isAdopterRole ? undefined : "Centro"
-          });
-        } catch (dbErr) {
-          console.warn("Supabase profiles upsert skipped:", dbErr);
-        }
-
-        // 3. Login automático imediato sem depender de confirmação de e-mail
+        // O perfil é criado pelo trigger documentado em supabase/schema.sql.
+        // Login automático imediato quando a confirmação de e-mail está desativada.
         let activeSession = data.session;
         if (!activeSession) {
           try {
@@ -345,16 +352,6 @@ export function RegisterView() {
           </div>
         )}
 
-        {successInfo && (
-          <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs space-y-2">
-            <p className="font-bold">Quase lá!</p>
-            <p>{successInfo}</p>
-            <Link href="/login" className="inline-block mt-2 font-bold text-primary underline">
-              Ir para tela de login
-            </Link>
-          </div>
-        )}
-
         {/* Role Switcher */}
         <div className="grid grid-cols-2 p-1.5 bg-muted/60 rounded-2xl border border-border">
           <button
@@ -398,7 +395,7 @@ export function RegisterView() {
                     value={adopterName}
                     onChange={(e) => setAdopterName(e.target.value)}
                     placeholder="Ex: Mariana da Silva Sauro"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -416,7 +413,7 @@ export function RegisterView() {
                       max={new Date().toISOString().split("T")[0]}
                       value={adopterBirthDate}
                       onChange={(e) => setAdopterBirthDate(e.target.value)}
-                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
                   <p className="text-[10px] text-muted-foreground">
@@ -449,7 +446,7 @@ export function RegisterView() {
                       value={adopterCpf}
                       onChange={(e) => setAdopterCpf(formatCPF(e.target.value))}
                       placeholder="000.000.000-00"
-                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
                   {adopterCpf.replace(/\D/g, "").length > 0 && adopterCpf.replace(/\D/g, "").length < 11 && (
@@ -478,7 +475,7 @@ export function RegisterView() {
                       value={adopterProfession}
                       onChange={(e) => setAdopterProfession(e.target.value)}
                       placeholder="Ex: Designer, Engenheiro"
-                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
                 </div>
@@ -495,7 +492,7 @@ export function RegisterView() {
                       value={adopterPhone}
                       onChange={(e) => setAdopterPhone(formatPhone(e.target.value))}
                       placeholder="(11) 98765-4321"
-                      className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
                 </div>
@@ -515,7 +512,7 @@ export function RegisterView() {
                     value={adopterSocialMedia}
                     onChange={(e) => setAdopterSocialMedia(e.target.value)}
                     placeholder="@instagram ou linkedin.com/in/perfil"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -533,7 +530,7 @@ export function RegisterView() {
                     value={adopterEmail}
                     onChange={(e) => setAdopterEmail(e.target.value)}
                     placeholder="seu.email@exemplo.com"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -552,15 +549,41 @@ export function RegisterView() {
                     value={adopterPassword}
                     onChange={(e) => setAdopterPassword(e.target.value)}
                     placeholder="Mínimo 6 caracteres"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
             </>
           ) : (
             <>
+              <div className="space-y-2">
+                <span className="font-bold text-foreground">Tipo de responsável *</span>
+                <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border bg-muted/40 p-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGuardianType("ngo");
+                      setNgoDocument("");
+                    }}
+                    className={`min-h-[44px] rounded-xl px-3 text-xs font-bold transition-colors ${guardianType === "ngo" ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    ONG / Instituição
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGuardianType("individual");
+                      setNgoDocument("");
+                    }}
+                    className={`min-h-[44px] rounded-xl px-3 text-xs font-bold transition-colors ${guardianType === "individual" ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    Doador individual
+                  </button>
+                </div>
+              </div>
+
               <div className="space-y-1">
-                <label className="font-bold text-foreground">Nome da ONG / Instituição *</label>
+                <label className="font-bold text-foreground">{guardianType === "ngo" ? "Nome da ONG / Instituição" : "Nome completo do doador"} *</label>
                 <div className="relative">
                   <Building2 className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
@@ -569,55 +592,56 @@ export function RegisterView() {
                     maxLength={100}
                     value={ngoName}
                     onChange={(e) => setNgoName(e.target.value)}
-                    placeholder="Nome da organização"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder={guardianType === "ngo" ? "Nome da organização" : "Nome e sobrenome"}
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1 sm:col-span-2">
                   <div className="flex items-center justify-between">
-                    <label htmlFor="ngo-cnpj-field" className="font-bold text-foreground">CNPJ da Instituição / Doador *</label>
+                    <label htmlFor="guardian-document-field" className="font-bold text-foreground">{guardianType === "ngo" ? "CNPJ" : "CPF"} *</label>
                     {ngoDocument && (
                       <span className={`text-[10px] font-medium ${
-                        isValidCNPJ(ngoDocument)
+                        (guardianType === "ngo" ? isValidCNPJ(ngoDocument) : isValidCPF(ngoDocument))
                           ? "text-emerald-600 dark:text-emerald-400"
-                          : ngoDocument.replace(/\D/g, "").length === 14
+                          : ngoDocument.replace(/\D/g, "").length === (guardianType === "ngo" ? 14 : 11)
                           ? "text-rose-500"
                           : "text-muted-foreground"
                       }`}>
-                        {ngoDocument.replace(/\D/g, "").length}/14 dígitos
+                        {ngoDocument.replace(/\D/g, "").length}/{guardianType === "ngo" ? 14 : 11} dígitos
                       </span>
                     )}
                   </div>
                   <div className="relative">
                     <FileText className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
-                      id="ngo-cnpj-field"
+                      id="guardian-document-field"
                       type="text"
                       required
                       inputMode="numeric"
-                      maxLength={18}
+                      maxLength={guardianType === "ngo" ? 18 : 14}
                       value={ngoDocument}
-                      onChange={(e) => setNgoDocument(formatCNPJ(e.target.value))}
-                      placeholder="00.000.000/0001-00"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      onChange={(e) => setNgoDocument(guardianType === "ngo" ? formatCNPJ(e.target.value) : formatCPF(e.target.value))}
+                      placeholder={guardianType === "ngo" ? "00.000.000/0001-00" : "000.000.000-00"}
+                      className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
-                  {ngoDocument.replace(/\D/g, "").length > 0 && ngoDocument.replace(/\D/g, "").length < 14 && (
+                  {ngoDocument.replace(/\D/g, "").length > 0 && ngoDocument.replace(/\D/g, "").length < (guardianType === "ngo" ? 14 : 11) && (
                     <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                      CNPJ incompleto (informe os 14 dígitos).
+                      {guardianType === "ngo" ? "CNPJ" : "CPF"} incompleto.
                     </p>
                   )}
-                  {ngoDocument.replace(/\D/g, "").length === 14 && !isValidCNPJ(ngoDocument) && (
+                  {ngoDocument.replace(/\D/g, "").length === (guardianType === "ngo" ? 14 : 11)
+                    && !(guardianType === "ngo" ? isValidCNPJ(ngoDocument) : isValidCPF(ngoDocument)) && (
                     <p className="text-[10px] text-rose-500 dark:text-rose-400">
-                      CNPJ inválido. Verifique os dígitos verificadores informados.
+                      {guardianType === "ngo" ? "CNPJ" : "CPF"} inválido. Verifique os dígitos verificadores.
                     </p>
                   )}
-                  {isValidCNPJ(ngoDocument) && (
+                  {(guardianType === "ngo" ? isValidCNPJ(ngoDocument) : isValidCPF(ngoDocument)) && (
                     <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
-                      ✓ CNPJ matematicamente válido.
+                      ✓ Documento válido.
                     </p>
                   )}
                 </div>
@@ -633,14 +657,44 @@ export function RegisterView() {
                       value={ngoCity}
                       onChange={(e) => setNgoCity(e.target.value)}
                       placeholder="São Paulo"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="guardian-state" className="font-bold text-foreground">Estado *</label>
+                  <select
+                    id="guardian-state"
+                    value={ngoState}
+                    onChange={(e) => setNgoState(e.target.value)}
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="" disabled>Selecione</option>
+                    {ESTADOS_BRASILEIROS.map((estado) => <option key={estado} value={estado}>{estado}</option>)}
+                  </select>
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="font-bold text-foreground">E-mail Institucional *</label>
+                <label className="font-bold text-foreground">WhatsApp / Celular *</label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="tel"
+                    required
+                    inputMode="tel"
+                    maxLength={15}
+                    value={ngoPhone}
+                    onChange={(e) => setNgoPhone(formatPhone(e.target.value))}
+                    placeholder="(11) 99999-9999"
+                    className="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-foreground">{guardianType === "ngo" ? "E-mail institucional" : "E-mail"} *</label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
@@ -650,8 +704,8 @@ export function RegisterView() {
                     autoComplete="email"
                     value={ngoEmail}
                     onChange={(e) => setNgoEmail(e.target.value)}
-                    placeholder="contato@ong.org"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder={guardianType === "ngo" ? "contato@ong.org" : "seu.email@exemplo.com"}
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -669,7 +723,7 @@ export function RegisterView() {
                     value={ngoPassword}
                     onChange={(e) => setNgoPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="min-h-[44px] w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
               </div>

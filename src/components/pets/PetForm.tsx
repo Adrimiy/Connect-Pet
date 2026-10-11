@@ -13,7 +13,7 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { PetPhotoUploader } from "@/components/pets/PetPhotoUploader";
 import { FotoPet, enviarFotosPet, fotosRemotasIniciais } from "@/lib/petPhotos";
 
-const FOTO_PADRAO = "https://images.unsplash.com/photo-1543466835-00a7907e9de1?q=80&w=600&auto=format&fit=crop";
+const FOTO_PADRAO = "/images/pet-placeholder.svg";
 
 interface PetFormProps {
   initialData?: Pet;
@@ -28,24 +28,48 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
   const [species, setSpecies] = useState<"dog" | "cat">(initialData?.species || "dog");
   const [breed, setBreed] = useState(initialData?.breed || "Vira-lata (SRD)");
   const [size, setSize] = useState<"small" | "medium" | "large">(initialData?.size || "medium");
-  const [approximateAge, setApproximateAge] = useState(initialData?.approximateAge || "1 ano");
+  const [approximateAge, setApproximateAge] = useState(initialData?.approximateAge || "");
   const [sex, setSex] = useState<"male" | "female">(initialData?.sex || "male");
+  const [status, setStatus] = useState(initialData?.status || "available");
+  const [ageCategory, setAgeCategory] = useState(initialData?.ageCategory || "young");
   const [story, setStory] = useState(initialData?.story || "");
   const [headline, setHeadline] = useState(initialData?.headline || "");
-  const [temperament, setTemperament] = useState(initialData?.temperament?.join(", ") || "Dócil, Brincalhão");
-  const [vaccinated, setVaccinated] = useState(initialData ? initialData.vaccinated : true);
-  const [castrated, setCastrated] = useState(initialData ? initialData.castrated : true);
+  const [temperament, setTemperament] = useState(initialData?.temperament?.join(", ") || "");
+  const [temperamentDescription, setTemperamentDescription] = useState(initialData?.temperamentDescription || "");
+  const [vaccinated, setVaccinated] = useState(initialData ? initialData.vaccinated : false);
+  const [castrated, setCastrated] = useState(initialData ? initialData.castrated : false);
+  const [dewormed, setDewormed] = useState(initialData ? initialData.dewormed : false);
+  const [vaccinationDetails, setVaccinationDetails] = useState(initialData?.vaccinationDetails || "");
+  const [specialNeeds, setSpecialNeeds] = useState(initialData?.specialNeeds || "");
   const [fotos, setFotos] = useState<FotoPet[]>(() => fotosRemotasIniciais(initialData?.photos));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [erroFotos, setErroFotos] = useState<string | null>(null);
+  const [erroFormulario, setErroFormulario] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
+    const guardiaoAtual = currentUser?.role === "guardian" ? currentUser : null;
 
     const temperamentArray = temperament.split(",").map((t) => t.trim()).filter(Boolean);
 
+    if (!name.trim() || !breed.trim() || !approximateAge.trim() || !headline.trim() || !story.trim() || !temperamentDescription.trim()) {
+      setErroFormulario("Preencha os campos obrigatórios antes de salvar.");
+      return;
+    }
+
+    if (!isEditing && !guardiaoAtual) {
+      setErroFormulario("Entre com um perfil de ONG ou doador para cadastrar um animal.");
+      return;
+    }
+
+    if (!isEditing && (!guardiaoAtual?.city?.trim() || !guardiaoAtual.state?.trim())) {
+      setErroFormulario("Complete a cidade e o estado no seu perfil antes de publicar um animal.");
+      return;
+    }
+
     setErroFotos(null);
+    setErroFormulario(null);
     setIsSubmitting(true);
     let photos: string[];
     try {
@@ -57,54 +81,77 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
     }
 
     if (isEditing && initialData) {
-      updatePet(initialData.id, {
-        name,
+      const salvou = await updatePet(initialData.id, {
+        name: name.trim(),
         species,
-        breed,
+        breed: breed.trim(),
         size,
-        approximateAge,
+        approximateAge: approximateAge.trim(),
+        ageCategory,
         sex,
-        story,
-        headline,
+        status,
+        story: story.trim(),
+        headline: headline.trim(),
         temperament: temperamentArray,
+        temperamentDescription: temperamentDescription.trim(),
         vaccinated,
         castrated,
+        dewormed,
+        vaccinationDetails,
+        specialNeeds,
         photos: photos.length > 0 ? photos : [FOTO_PADRAO]
       });
+      if (!salvou) {
+        setErroFormulario("Não foi possível salvar as alterações. Confira os dados e tente novamente.");
+        setIsSubmitting(false);
+        return;
+      }
     } else {
-      addPet({
-        name,
+      if (!guardiaoAtual) {
+        setErroFormulario("Entre com um perfil de ONG ou doador para cadastrar um animal.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      const salvou = await addPet({
+        name: name.trim(),
         species,
-        breed,
+        breed: breed.trim(),
         size,
-        approximateAge,
-        ageCategory: "young",
+        approximateAge: approximateAge.trim(),
+        ageCategory,
         sex,
         status: "available",
         vaccinated,
         castrated,
-        dewormed: true,
-        vaccinationDetails: "Vacinas essenciais em dia.",
-        specialNeeds: "",
+        dewormed,
+        vaccinationDetails: vaccinationDetails.trim(),
+        specialNeeds: specialNeeds.trim(),
         photos: photos.length > 0 ? photos : [FOTO_PADRAO],
-        headline: headline || "Pronto para alegrar seu lar.",
-        story: story || "Resgatado com muito carinho, pronto para ser adotado com amor.",
-        temperament: temperamentArray.length > 0 ? temperamentArray : ["Dócil"],
-        temperamentDescription: "Amoroso e companheiro para todas as horas.",
-        guardianId: currentUser?.id || "guardian-1",
-        guardianName: currentUser?.name || "ONG / Protetor",
-        guardianType: currentUser?.role === "guardian" ? currentUser.guardianType : "ngo",
-        guardianPhone: currentUser?.primaryPhone || "(11) 97123-9988",
-        guardianEmail: currentUser?.email || "contato@patinhascomamor.org.br",
+        headline: headline.trim(),
+        story: story.trim(),
+        temperament: temperamentArray,
+        temperamentDescription: temperamentDescription.trim(),
+        guardianId: guardiaoAtual.id,
+        guardianName: guardiaoAtual.name,
+        guardianType: guardiaoAtual.guardianType,
+        guardianPhone: guardiaoAtual.primaryPhone,
+        guardianEmail: guardiaoAtual.email,
         location: {
-          city: currentUser?.role === "guardian" ? currentUser.city : "São Paulo",
-          state: currentUser?.role === "guardian" ? currentUser.state : "SP",
-          neighborhood: currentUser?.role === "guardian" ? currentUser.neighborhood : "Centro"
+          city: guardiaoAtual.city || "",
+          state: guardiaoAtual.state || "",
+          neighborhood: guardiaoAtual.neighborhood || ""
         }
       });
+      if (!salvou) {
+        setErroFormulario("Não foi possível publicar o animal. Confira os dados e tente novamente.");
+        setIsSubmitting(false);
+        return;
+      }
     }
 
     router.push("/dashboard");
+    router.refresh();
   };
 
   return (
@@ -130,7 +177,14 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          {erroFormulario && (
+            <div role="alert" className="flex gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span className="min-w-0 break-words">{erroFormulario}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <Label>Nome *</Label>
               <Input required maxLength={50} value={name} onChange={(e) => setName(e.target.value)} />
@@ -141,13 +195,13 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="space-y-1">
               <Label>Espécie</Label>
               <select
                 value={species}
                 onChange={(e) => setSpecies(e.target.value as "dog" | "cat")}
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm"
               >
                 <option value="dog">Cão</option>
                 <option value="cat">Gato</option>
@@ -158,7 +212,7 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
               <select
                 value={size}
                 onChange={(e) => setSize(e.target.value as "small" | "medium" | "large")}
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm"
               >
                 <option value="small">Pequeno</option>
                 <option value="medium">Médio</option>
@@ -170,7 +224,7 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
               <select
                 value={sex}
                 onChange={(e) => setSex(e.target.value as "male" | "female")}
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm"
               >
                 <option value="male">Macho</option>
                 <option value="female">Fêmea</option>
@@ -178,22 +232,44 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
             </div>
           </div>
 
-          <div className="space-y-1">
-            <Label>Idade Aproximada</Label>
-            <Input maxLength={30} value={approximateAge} onChange={(e) => setApproximateAge(e.target.value)} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label>Faixa etária</Label>
+              <select value={ageCategory} onChange={(e) => setAgeCategory(e.target.value as typeof ageCategory)} className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm">
+                <option value="puppy">Filhote</option>
+                <option value="young">Jovem</option>
+                <option value="adult">Adulto</option>
+                <option value="senior">Idoso</option>
+              </select>
+            </div>
+            {isEditing && (
+              <div className="space-y-1">
+                <Label>Status da adoção</Label>
+                <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm">
+                  <option value="available">Disponível</option>
+                  <option value="in_process">Em processo</option>
+                  <option value="adopted">Adotado</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="space-y-1">
-            <Label>Frase de Destaque</Label>
-            <Input maxLength={120} value={headline} onChange={(e) => setHeadline(e.target.value)} />
+            <Label>Idade Aproximada *</Label>
+            <Input required maxLength={30} value={approximateAge} onChange={(e) => setApproximateAge(e.target.value)} />
+          </div>
+
+          <div className="space-y-1">
+            <Label>Frase de Destaque *</Label>
+            <Input required maxLength={120} value={headline} onChange={(e) => setHeadline(e.target.value)} />
           </div>
 
           <div className="space-y-1">
             <div className="flex justify-between items-center">
-              <Label>História de Resgate</Label>
+              <Label>História de Resgate *</Label>
               <span className="text-[10px] text-muted-foreground">{story.length}/1000</span>
             </div>
-            <Textarea rows={3} maxLength={1000} value={story} onChange={(e) => setStory(e.target.value.slice(0, 1000))} />
+            <Textarea required rows={3} maxLength={1000} value={story} onChange={(e) => setStory(e.target.value.slice(0, 1000))} />
           </div>
 
           <div className="space-y-1">
@@ -201,8 +277,30 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
             <Input maxLength={150} value={temperament} onChange={(e) => setTemperament(e.target.value)} />
           </div>
 
-          <div className="flex gap-6 p-4 rounded-xl bg-secondary/50">
-            <label htmlFor="vac" className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+          <div className="space-y-1">
+            <Label>Descrição de comportamento e convivência *</Label>
+            <Textarea
+              required
+              rows={3}
+              maxLength={500}
+              value={temperamentDescription}
+              onChange={(e) => setTemperamentDescription(e.target.value.slice(0, 500))}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label>Detalhes da vacinação</Label>
+              <Input maxLength={200} value={vaccinationDetails} onChange={(e) => setVaccinationDetails(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Necessidades especiais</Label>
+              <Input maxLength={200} value={specialNeeds} onChange={(e) => setSpecialNeeds(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 rounded-xl bg-secondary/50 p-4 sm:grid-cols-3">
+            <label htmlFor="vac" className="flex min-h-[44px] items-center gap-2 text-sm font-medium cursor-pointer">
               <input
                 id="vac"
                 type="checkbox"
@@ -212,7 +310,7 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
               />
               Vacinado
             </label>
-            <label htmlFor="cast" className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+            <label htmlFor="cast" className="flex min-h-[44px] items-center gap-2 text-sm font-medium cursor-pointer">
               <input
                 id="cast"
                 type="checkbox"
@@ -222,14 +320,18 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
               />
               Castrado
             </label>
+            <label htmlFor="verm" className="flex min-h-[44px] items-center gap-2 text-sm font-medium cursor-pointer">
+              <input id="verm" type="checkbox" checked={dewormed} onChange={(e) => setDewormed(e.target.checked)} className="w-4 h-4 rounded accent-primary cursor-pointer" />
+              Vermifugado
+            </label>
           </div>
 
         </CardContent>
         <CardFooter className="flex flex-col-reverse sm:flex-row sm:justify-between gap-2">
-          <Button variant="outline" type="button" disabled={isSubmitting} className="min-h-[44px]" onClick={() => router.back()}>
+          <Button variant="outline" type="button" disabled={isSubmitting} className="min-h-[44px] w-full sm:w-auto" onClick={() => router.back()}>
             Cancelar
           </Button>
-          <Button type="submit" disabled={isSubmitting} className="min-h-[44px]">
+          <Button type="submit" disabled={isSubmitting} className="min-h-[44px] w-full sm:w-auto">
             {isSubmitting ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Salvando...

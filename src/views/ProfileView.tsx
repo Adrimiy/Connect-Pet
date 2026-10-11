@@ -24,7 +24,8 @@ import {
   CheckCircle2,
   Building,
   FileText,
-  Lock
+  Lock,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +34,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { HousingType, SpeciesPreference, SizePreference, AdopterProfile, GuardianProfile, CurrentUser } from "@/types";
 import { isValidPhone, validateFullName } from "@/lib/validation";
+import { enviarAvatarPerfil, removerAvatarPerfil } from "@/lib/profileAvatar";
 
 const BRAZILIAN_STATES = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
@@ -53,15 +55,16 @@ function ProfileForm({ user }: { user: CurrentUser }) {
   const [name, setName] = useState(user.name || "");
   const [primaryPhone, setPrimaryPhone] = useState(user.primaryPhone || "");
   const [avatar, setAvatar] = useState<string | undefined>(user.avatar || undefined);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
 
   // Form states - Adotante
   const [birthDate, setBirthDate] = useState(adopterUser?.birthDate || "");
   const [profession, setProfession] = useState(adopterUser?.profession || "");
   const [socialMedia, setSocialMedia] = useState(user.socialMedia || "");
-  const [city, setCity] = useState(user.city || (isAdopter ? "" : "São Paulo"));
-  const [state, setState] = useState(user.state || "SP");
+  const [city, setCity] = useState(user.city || "");
+  const [state, setState] = useState(user.state || "");
   const [housingType, setHousingType] = useState<HousingType>(adopterUser?.housingType || "casa");
-  const [hasAdequateSpace, setHasAdequateSpace] = useState<boolean>(adopterUser?.hasAdequateSpace ?? true);
+  const [hasAdequateSpace, setHasAdequateSpace] = useState<boolean>(adopterUser?.hasAdequateSpace ?? false);
   const [hasOtherPets, setHasOtherPets] = useState<boolean>(adopterUser?.hasOtherPets ?? false);
   const [otherPetsDetails, setOtherPetsDetails] = useState(adopterUser?.otherPetsDetails || "");
   const [hasChildren, setHasChildren] = useState<boolean>(adopterUser?.hasChildren ?? false);
@@ -76,15 +79,21 @@ function ProfileForm({ user }: { user: CurrentUser }) {
   const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Upload e compressão de foto no cliente
+  // Pré-visualização compactada no cliente; o arquivo original validado é enviado ao Storage ao salvar.
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
       showToast("Formato inválido", "Por favor, selecione um arquivo de imagem (JPEG, PNG ou WebP).", "error");
       return;
     }
+
+    if (file.size > 2 * 1024 * 1024) {
+      showToast("Arquivo muito grande", "A foto de perfil deve ter no máximo 2 MB.", "error");
+      return;
+    }
+    setAvatarFile(file);
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -123,13 +132,19 @@ function ProfileForm({ user }: { user: CurrentUser }) {
   };
 
   const handleRemovePhoto = async () => {
+    const avatarAnterior = user.avatar;
     setAvatar(undefined);
+    setAvatarFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
     try {
-      await updateUserProfile({ avatar: null });
-      showToast("Foto removida", "Sua foto de perfil foi removida com sucesso.", "info");
+      const salvou = await updateUserProfile({ avatar: null });
+      if (!salvou) {
+        setAvatar(avatarAnterior || undefined);
+        return;
+      }
+      await removerAvatarPerfil(avatarAnterior);
     } catch (err) {
       console.error(err);
       showToast("Erro ao remover", "Não foi possível remover a foto de perfil.", "error");
@@ -168,41 +183,58 @@ function ProfileForm({ user }: { user: CurrentUser }) {
       return;
     }
 
+    if (!BRAZILIAN_STATES.includes(state)) {
+      showToast("Campo obrigatório", "Por favor, selecione o estado onde mora ou atua.", "error");
+      return;
+    }
+
     setIsSaving(true);
     try {
+      const avatarAnterior = user.avatar;
+      const avatarRemoto = avatarFile ? await enviarAvatarPerfil(avatarFile) : avatar;
+      let salvou = false;
       if (isAdopter) {
         const finalBirthDate = isBirthDateLocked ? (adopterUser?.birthDate || birthDate) : birthDate;
-        await updateUserProfile({
+        salvou = await updateUserProfile({
           name: name.trim(),
           primaryPhone: primaryPhone.trim(),
           birthDate: finalBirthDate,
           profession: profession.trim(),
-          socialMedia: socialMedia.trim() || undefined,
-          avatar: avatar ? avatar : null,
+          socialMedia: socialMedia.trim(),
+          avatar: avatarRemoto || null,
           city: city.trim(),
           state,
           housingType,
           hasAdequateSpace,
           hasOtherPets,
-          otherPetsDetails: hasOtherPets ? otherPetsDetails.trim() : undefined,
+          otherPetsDetails: hasOtherPets ? otherPetsDetails.trim() : "",
           hasChildren,
           speciesPreference,
           sizePreference,
-          bio: bio.trim() || undefined
+          bio: bio.trim()
         });
       } else {
-        await updateUserProfile({
+        salvou = await updateUserProfile({
           name: name.trim(),
           primaryPhone: primaryPhone.trim(),
-          avatar: avatar ? avatar : null,
+          avatar: avatarRemoto || null,
           city: city.trim(),
           state,
           neighborhood: neighborhood.trim(),
-          responsibleName: responsibleName.trim() || undefined,
-          bio: bio.trim() || undefined,
-          socialMedia: socialMedia.trim() || undefined
+          responsibleName: responsibleName.trim(),
+          bio: bio.trim(),
+          socialMedia: socialMedia.trim()
         });
       }
+      if (!salvou) {
+        if (avatarFile && avatarRemoto) await removerAvatarPerfil(avatarRemoto);
+        return;
+      }
+      if (avatarFile && avatarAnterior && avatarAnterior !== avatarRemoto) {
+        await removerAvatarPerfil(avatarAnterior);
+      }
+      setAvatar(avatarRemoto || undefined);
+      setAvatarFile(null);
     } catch (err) {
       console.error(err);
       showToast("Erro ao salvar", "Não foi possível salvar as alterações. Tente novamente.", "error");
@@ -260,7 +292,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 title="Alterar foto de perfil"
-                className="absolute bottom-0 right-0 w-9 h-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-lg hover:scale-110 active:scale-95 transition-all border-2 border-card"
+                className="absolute bottom-0 right-0 min-h-[44px] min-w-[44px] rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-lg hover:scale-110 active:scale-95 transition-all border-2 border-card"
               >
                 <Camera className="w-4 h-4" />
               </button>
@@ -296,7 +328,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                   size="sm"
                   variant="outline"
                   onClick={() => fileInputRef.current?.click()}
-                  className="rounded-full text-xs h-8 px-3 border-border/80"
+                  className="min-h-[44px] rounded-full px-3 text-xs border-border/80"
                 >
                   <Camera className="w-3.5 h-3.5 mr-1.5 text-primary" />
                   {avatar ? "Alterar foto" : "Escolher foto"}
@@ -308,7 +340,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                     size="sm"
                     variant="ghost"
                     onClick={handleRemovePhoto}
-                    className="rounded-full text-xs h-8 px-3 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                    className="min-h-[44px] rounded-full px-3 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
                   >
                     <Trash2 className="w-3.5 h-3.5 mr-1.5" />
                     Remover foto
@@ -574,8 +606,9 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                       id="state"
                       value={state}
                       onChange={(e) => setState(e.target.value)}
-                      className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+                    className="w-full min-h-[44px] rounded-xl border border-border bg-background px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
                     >
+                      <option value="" disabled>Selecione</option>
                       {BRAZILIAN_STATES.map((uf) => (
                         <option key={uf} value={uf}>{uf}</option>
                       ))}
@@ -594,7 +627,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                       id="housingType"
                       value={housingType}
                       onChange={(e) => setHousingType(e.target.value as HousingType)}
-                      className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+                      className="w-full min-h-[44px] rounded-xl border border-border bg-background px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
                     >
                       <option value="casa">Casa com quintal</option>
                       <option value="apartamento">Apartamento com telas/rede</option>
@@ -728,7 +761,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                       id="speciesPref"
                       value={speciesPreference}
                       onChange={(e) => setSpeciesPreference(e.target.value as SpeciesPreference)}
-                      className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+                      className="w-full min-h-[44px] rounded-xl border border-border bg-background px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
                     >
                       <option value="both">Cachorro ou Gato (Ambos)</option>
                       <option value="dog">Somente Cachorro</option>
@@ -745,7 +778,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                       id="sizePref"
                       value={sizePreference}
                       onChange={(e) => setSizePreference(e.target.value as SizePreference)}
-                      className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+                      className="w-full min-h-[44px] rounded-xl border border-border bg-background px-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
                     >
                       <option value="any">Qualquer porte / Sem preferência</option>
                       <option value="small">Porte Pequeno (até 10kg)</option>
@@ -817,6 +850,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
                     onChange={(e) => setState(e.target.value)}
                     className="w-full min-h-[44px] rounded-xl border border-border bg-background px-3 text-xs text-foreground cursor-pointer"
                   >
+                    <option value="" disabled>Selecione</option>
                     {BRAZILIAN_STATES.map((uf) => (
                       <option key={uf} value={uf}>{uf}</option>
                     ))}
@@ -883,7 +917,11 @@ function ProfileForm({ user }: { user: CurrentUser }) {
 }
 
 export function ProfileView() {
-  const { currentUser } = useApp();
+  const { currentUser, authLoading } = useApp();
+
+  if (authLoading) {
+    return <div className="flex min-h-[70vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando perfil" /></div>;
+  }
 
   if (!currentUser) {
     return (

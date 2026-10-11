@@ -15,7 +15,7 @@ import {
 import { PawWatermark } from "@/components/ui/PawWatermark";
 
 export function HomeView() {
-  const { pets, isFavorite, toggleFavorite, currentUser, requireAuth } = useApp();
+  const { pets, petsLoading, petsError, isFavorite, toggleFavorite, currentUser, requireAuth } = useApp();
 
   // 5 animais dinâmicos do catálogo real (Supabase / AppContext)
   const dynamicPets = pets.slice(0, 5);
@@ -504,13 +504,26 @@ export function HomeView() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 max-w-7xl">
 
           {/* Grade com Cards de Pets Reais (Consumidos do Supabase / AppContext) */}
+          {petsLoading && (
+            <p className="mb-6 text-center text-sm text-muted-foreground" role="status">Carregando animais disponíveis...</p>
+          )}
+          {!petsLoading && petsError && (
+            <p className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-center text-sm text-destructive" role="alert">
+              Não foi possível carregar os animais agora. Acesse o catálogo para tentar novamente.
+            </p>
+          )}
+          {!petsLoading && !petsError && dynamicPets.length === 0 && (
+            <p className="mb-6 rounded-2xl border border-border bg-card p-4 text-center text-sm text-muted-foreground">
+              Ainda não há animais publicados no catálogo.
+            </p>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-5 lg:gap-6">
             {dynamicPets.map((pet) => {
               const favorite = isFavorite(pet.id);
               const mainPhoto =
                 pet.photos && pet.photos.length > 0 && pet.photos[0]
                   ? pet.photos[0]
-                  : "https://images.unsplash.com/photo-1543466835-00a7907e9de1?q=80&w=800&auto=format&fit=crop";
+                  : "/images/pet-placeholder.svg";
 
               return (
                 <div
@@ -555,7 +568,7 @@ export function HomeView() {
                           </h3>
                         </Link>
                         <span className="text-[11px] font-bold text-sky-950 bg-[#BEE5FE] px-2 py-0.5 rounded-full whitespace-nowrap">
-                          {pet.approximateAge || "1 ano"}
+                          {pet.approximateAge || "Idade não informada"}
                         </span>
                       </div>
 
@@ -566,7 +579,7 @@ export function HomeView() {
 
                     <div className="pt-3 mt-3 border-t border-sky-100 dark:border-slate-800/80 flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
                       <span className="line-clamp-1 font-medium">
-                        {pet.location?.city || "São Paulo"}, {pet.location?.state || "SP"}
+                        {[pet.location?.city, pet.location?.state].filter(Boolean).join(", ") || "Localização não informada"}
                       </span>
                       <span
                         className={`w-2.5 h-2.5 rounded-full ${

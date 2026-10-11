@@ -10,14 +10,13 @@ import {
   ApplicationStatus,
   SmartMatchQuizData,
   MatchResult,
-  GuardianType,
   HousingType,
   SpeciesPreference,
   SizePreference
 } from '../types';
-import { mockPets as initialMockPets } from '../data/mockPets';
 import { createClient } from '@/lib/client';
 import { removerFotosDoStorage } from '@/lib/petPhotos';
+import { normalizarFotosPet, obterUrlImagemPermitida } from '@/lib/origensImagem';
 import type { AuthFeature, AuthPromptState } from '@/components/auth/auth-features';
 
 export interface ToastItem {
@@ -36,8 +35,8 @@ interface AppContextType {
 
   // Current User
   currentUser: CurrentUser | null;
-  setCurrentUser: (user: CurrentUser | null) => void;
-  updateUserProfile: (updates: Partial<CurrentUser> & { avatar?: string | null }) => Promise<void>;
+  authLoading: boolean;
+  updateUserProfile: (updates: Partial<CurrentUser> & { avatar?: string | null }) => Promise<boolean>;
   logout: () => void | Promise<void>;
 
   // Controle de acesso: retorna true se autenticado; caso contrário abre o modal de acesso restrito
@@ -47,23 +46,29 @@ interface AppContextType {
 
   // Pets
   pets: Pet[];
-  addPet: (pet: Omit<Pet, 'id' | 'createdAt'>) => void;
-  updatePet: (id: string, updates: Partial<Pet>) => void;
-  deletePet: (id: string) => void;
+  petsLoading: boolean;
+  petsError: string | null;
+  reloadPets: () => Promise<void>;
+  addPet: (pet: Omit<Pet, 'id' | 'createdAt'>) => Promise<boolean>;
+  updatePet: (id: string, updates: Partial<Pet>) => Promise<boolean>;
+  deletePet: (id: string) => Promise<boolean>;
 
   // Favorites
   favorites: string[];
-  toggleFavorite: (petId: string) => void;
+  toggleFavorite: (petId: string) => Promise<boolean>;
   isFavorite: (petId: string) => boolean;
   showFavoritesOnly: boolean;
   setShowFavoritesOnly: React.Dispatch<React.SetStateAction<boolean>>;
 
   // Applications
   applications: PreAdoptionApplication[];
-  submitApplication: (applicationData: Omit<PreAdoptionApplication, 'id' | 'createdAt' | 'status' | 'notes' | 'messages' | 'automatedAnalysis'>) => PreAdoptionApplication;
-  updateApplicationStatus: (appId: string, status: ApplicationStatus) => void;
-  updateGuardianNotes: (appId: string, notes: string) => void;
-  sendApplicationMessage: (appId: string, content: string) => void;
+  applicationsLoading: boolean;
+  applicationsError: string | null;
+  reloadApplications: () => void;
+  submitApplication: (applicationData: Omit<PreAdoptionApplication, 'id' | 'createdAt' | 'status' | 'notes' | 'messages' | 'automatedAnalysis'>) => Promise<PreAdoptionApplication | null>;
+  updateApplicationStatus: (appId: string, status: ApplicationStatus) => Promise<boolean>;
+  updateGuardianNotes: (appId: string, notes: string) => Promise<boolean>;
+  sendApplicationMessage: (appId: string, content: string) => Promise<boolean>;
 
   // Toasts
   toasts: ToastItem[];
@@ -78,10 +83,6 @@ interface AppContextType {
 }
 
 const STORAGE_KEYS = {
-  PETS: 'acolher_pets_v2',
-  APPLICATIONS: 'acolher_applications_v1',
-  USER: 'acolher_user_v1',
-  FAVORITES: 'acolher_favorites_v1',
   THEME: 'acolher_theme_mode_v1',
 };
 
@@ -89,31 +90,31 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 function normalizePet(raw: unknown): Pet {
   const rawObj = (raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}) as Record<string, unknown>;
-  const photos = Array.isArray(rawObj.photos) && rawObj.photos.length > 0
-    ? (rawObj.photos as string[])
-    : Array.isArray(rawObj.images) && rawObj.images.length > 0
-      ? (rawObj.images as string[])
-      : ["https://images.unsplash.com/photo-1543466835-00a7907e9de1?q=80&w=1000&auto=format&fit=crop"];
+  const photos = normalizarFotosPet(
+    Array.isArray(rawObj.photos) && rawObj.photos.length > 0
+      ? rawObj.photos
+      : rawObj.images
+  );
 
-  let location = { city: "São Paulo", state: "SP", neighborhood: "Vila Mariana" };
+  let location = { city: "", state: "", neighborhood: "" };
   const rawLoc = rawObj.location;
   if (rawLoc && typeof rawLoc === "object") {
     const locObj = rawLoc as Record<string, string>;
     location = {
-      city: locObj.city || "São Paulo",
-      state: locObj.state || "SP",
-      neighborhood: locObj.neighborhood || "Vila Mariana"
+      city: locObj.city || "",
+      state: locObj.state || "",
+      neighborhood: locObj.neighborhood || ""
     };
   } else if (typeof rawLoc === "string") {
     const parts = rawLoc.split(",").map((s: string) => s.trim());
     location = {
-      city: parts[0] || "São Paulo",
-      state: parts[1] || "SP",
-      neighborhood: "Vila Mariana"
+      city: parts[0] || "",
+      state: parts[1] || "",
+      neighborhood: ""
     };
   }
 
-  let temperament: string[] = ["Dócil", "Sociável"];
+  let temperament: string[] = [];
   if (Array.isArray(rawObj.temperament)) {
     temperament = rawObj.temperament as string[];
   } else if (typeof rawObj.temperament === "string") {
@@ -121,45 +122,79 @@ function normalizePet(raw: unknown): Pet {
   }
 
   return {
-    id: String(rawObj.id || `pet-${Date.now()}`),
+    id: String(rawObj.id || ""),
     name: String(rawObj.name || "Sem Nome"),
     species: rawObj.species === "cat" || rawObj.species === "Gato" ? "cat" : "dog",
-    breed: String(rawObj.breed || "Vira-lata (SRD)"),
+    breed: String(rawObj.breed || "Não informada"),
     size: rawObj.size === "small" || rawObj.size === "Pequeno" ? "small" : rawObj.size === "large" || rawObj.size === "Grande" ? "large" : "medium",
-    approximateAge: String(rawObj.approximateAge || rawObj.age || "1 ano"),
+    approximateAge: String(rawObj.approximateAge || rawObj.age || "Não informada"),
     ageCategory: (rawObj.ageCategory as Pet['ageCategory']) || "young",
     sex: rawObj.sex === "female" || rawObj.gender === "Fêmea" ? "female" : "male",
     status: rawObj.status === "adopted" || rawObj.status === "Adotado" ? "adopted" : rawObj.status === "in_process" || rawObj.status === "Em processo" ? "in_process" : "available",
     vaccinated: !!rawObj.vaccinated,
     castrated: !!rawObj.castrated,
-    dewormed: rawObj.dewormed !== undefined ? !!rawObj.dewormed : true,
-    vaccinationDetails: String(rawObj.vaccinationDetails || "Vacinação em dia."),
+    dewormed: !!rawObj.dewormed,
+    vaccinationDetails: String(rawObj.vaccinationDetails || ""),
     specialNeeds: String(rawObj.specialNeeds || ""),
     photos,
-    headline: String(rawObj.headline || "Pronto para um novo lar cheio de carinho."),
-    story: String(rawObj.story || rawObj.history || "Resgatado com carinho, aguarda uma família amorosa e responsável."),
-    temperament: temperament.length > 0 ? temperament : ["Dócil"],
-    temperamentDescription: String(rawObj.temperamentDescription || "Muito dócil, companheiro e educado."),
-    guardianId: String(rawObj.guardianId || "guardian-1"),
-    guardianName: String(rawObj.guardianName || (rawObj.isOng ? "ONG Patinhas com Amor" : "Protetor Independente")),
+    headline: String(rawObj.headline || "Informações em atualização."),
+    story: String(rawObj.story || rawObj.history || "História ainda não informada pelo responsável."),
+    temperament,
+    temperamentDescription: String(rawObj.temperamentDescription || "Informações de convivência ainda não fornecidas."),
+    guardianId: String(rawObj.guardianId || ""),
+    guardianName: String(rawObj.guardianName || "Responsável não informado"),
     guardianType: (rawObj.guardianType as Pet['guardianType']) || (rawObj.isOng ? "ngo" : "individual"),
-    guardianPhone: String(rawObj.guardianPhone || "(11) 97123-9988"),
-    guardianEmail: String(rawObj.guardianEmail || "contato@patinhascomamor.org.br"),
+    guardianPhone: String(rawObj.guardianPhone || ""),
+    guardianEmail: String(rawObj.guardianEmail || ""),
     location,
-    createdAt: String(rawObj.createdAt || new Date().toISOString())
+    createdAt: String(rawObj.createdAt || "")
   };
+}
+
+function mapearPetDoBanco(pet: Record<string, unknown>): Pet {
+  return normalizePet({
+    id: pet.id,
+    name: pet.name,
+    species: pet.species,
+    breed: pet.breed,
+    size: pet.size,
+    approximateAge: pet.approximate_age,
+    ageCategory: pet.age_category,
+    sex: pet.sex,
+    status: pet.status,
+    vaccinated: pet.vaccinated,
+    castrated: pet.castrated,
+    dewormed: pet.dewormed,
+    vaccinationDetails: pet.vaccination_details,
+    specialNeeds: pet.special_needs,
+    photos: pet.photos,
+    headline: pet.headline,
+    story: pet.story,
+    temperament: pet.temperament,
+    temperamentDescription: pet.temperament_description,
+    guardianId: pet.guardian_id,
+    guardianName: pet.guardian_name,
+    guardianType: pet.guardian_type,
+    guardianPhone: pet.guardian_phone,
+    guardianEmail: pet.guardian_email,
+    location: {
+      city: pet.city || '',
+      state: pet.state || '',
+      neighborhood: pet.neighborhood || ''
+    },
+    createdAt: pet.created_at
+  });
 }
 
 function cleanAvatar(val: unknown): string | undefined {
   if (typeof val === 'string' && val.trim().length > 0 && val !== 'null' && val !== 'undefined') {
-    return val.trim();
+    return obterUrlImagemPermitida(val) || undefined;
   }
   return undefined;
 }
 
-async function fetchUserProfile(supabaseClient: ReturnType<typeof createClient>, sessionUser: SupabaseUser): Promise<CurrentUser> {
+async function fetchUserProfile(supabaseClient: ReturnType<typeof createClient>, sessionUser: SupabaseUser): Promise<CurrentUser | null> {
   const meta = (sessionUser.user_metadata || {}) as Record<string, unknown>;
-  const isGuardian = meta.role === 'guardian';
 
   // Remove resquícios de avatar Base64 do JWT antes de continuar. Sem aguardar,
   // uma navegação pode reenviar o cookie antigo e ultrapassar o limite de headers.
@@ -170,32 +205,31 @@ async function fetchUserProfile(supabaseClient: ReturnType<typeof createClient>,
     }
   }
 
-  try {
-    const { data: profile, error } = await supabaseClient
+  const { data: profile, error } = await supabaseClient
       .from('profiles')
-      .select('*')
+      .select('id, role, name, email, primary_phone, secondary_phone, avatar, cpf, rg, birth_date, profession, social_media, housing_type, has_adequate_space, has_other_pets, other_pets_details, has_children, species_preference, size_preference, guardian_type, responsible_name, document, city, state, neighborhood, description, bio, verified')
       .eq('id', sessionUser.id)
       .maybeSingle();
 
-    if (!error && profile) {
+  if (!error && profile) {
       // Se profile.avatar foi explicitamente setado como null ou vazio, a foto foi removida do cadastro
       const resolvedAvatar = (profile.avatar === null || profile.avatar === '')
         ? undefined
-        : (cleanAvatar(profile.avatar) || cleanAvatar(meta.avatar));
+        : cleanAvatar(profile.avatar);
 
       if (profile.role === 'guardian') {
         return {
           id: profile.id,
           role: 'guardian',
           guardianType: profile.guardian_type || 'ngo',
-          name: profile.name || 'ONG Patinhas',
+          name: profile.name || 'Responsável',
           responsibleName: profile.responsible_name || undefined,
           document: profile.document || '',
           email: profile.email || sessionUser.email || '',
           primaryPhone: profile.primary_phone || '',
-          city: profile.city || 'São Paulo',
-          state: profile.state || 'SP',
-          neighborhood: profile.neighborhood || 'Centro',
+          city: profile.city || '',
+          state: profile.state || '',
+          neighborhood: profile.neighborhood || '',
           description: profile.description || undefined,
           bio: profile.bio || undefined,
           verified: profile.verified ?? false,
@@ -208,76 +242,29 @@ async function fetchUserProfile(supabaseClient: ReturnType<typeof createClient>,
           name: profile.name || 'Adotante',
           cpf: profile.cpf || '',
           rg: profile.rg || '',
-          birthDate: profile.birth_date || '2000-01-01',
+          birthDate: profile.birth_date || '',
           primaryPhone: profile.primary_phone || '',
           secondaryPhone: profile.secondary_phone || undefined,
           email: profile.email || sessionUser.email || '',
           profession: profile.profession || undefined,
           socialMedia: profile.social_media || undefined,
           avatar: resolvedAvatar,
-          city: profile.city || (meta.city as string | undefined) || '',
-          state: profile.state || (meta.state as string | undefined) || '',
-          housingType: (profile.housing_type as HousingType) || (meta.housingType as HousingType | undefined),
-          hasAdequateSpace: profile.has_adequate_space ?? (meta.hasAdequateSpace as boolean | undefined),
-          hasOtherPets: profile.has_other_pets ?? (meta.hasOtherPets as boolean | undefined),
-          otherPetsDetails: profile.other_pets_details || (meta.otherPetsDetails as string | undefined),
-          hasChildren: profile.has_children ?? (meta.hasChildren as boolean | undefined),
-          speciesPreference: (profile.species_preference as SpeciesPreference) || (meta.speciesPreference as SpeciesPreference | undefined),
-          sizePreference: (profile.size_preference as SizePreference) || (meta.sizePreference as SizePreference | undefined),
-          bio: profile.bio || (meta.bio as string | undefined)
+          city: profile.city || '',
+          state: profile.state || '',
+          housingType: (profile.housing_type as HousingType) || undefined,
+          hasAdequateSpace: profile.has_adequate_space ?? undefined,
+          hasOtherPets: profile.has_other_pets ?? undefined,
+          otherPetsDetails: profile.other_pets_details || undefined,
+          hasChildren: profile.has_children ?? undefined,
+          speciesPreference: (profile.species_preference as SpeciesPreference) || undefined,
+          sizePreference: (profile.size_preference as SizePreference) || undefined,
+          bio: profile.bio || undefined
         };
       }
-    }
-  } catch (err) {
-    console.warn('Profile query error:', err);
   }
 
-  // Fallback seguro extraído de sessionUser.user_metadata (gravado durante o signUp)
-  if (isGuardian) {
-    return {
-      id: sessionUser.id,
-      role: 'guardian',
-      guardianType: (meta.guardianType as GuardianType) || 'ngo',
-      name: String(meta.name || sessionUser.email?.split('@')[0] || 'ONG Patinhas'),
-      responsibleName: meta.responsibleName ? String(meta.responsibleName) : undefined,
-      document: String(meta.document || ''),
-      email: sessionUser.email || '',
-      primaryPhone: String(meta.primaryPhone || ''),
-      city: String(meta.city || 'São Paulo'),
-      state: String(meta.state || 'SP'),
-      neighborhood: String(meta.neighborhood || 'Centro'),
-      description: meta.description ? String(meta.description) : undefined,
-      bio: meta.bio ? String(meta.bio) : undefined,
-      socialMedia: meta.socialMedia ? String(meta.socialMedia) : undefined,
-      verified: !!meta.verified,
-      avatar: cleanAvatar(meta.avatar)
-    };
-  }
-
-  return {
-    id: sessionUser.id,
-    role: 'adopter',
-    name: String(meta.name || sessionUser.email?.split('@')[0] || 'Adotante'),
-    cpf: String(meta.cpf || ''),
-    rg: String(meta.rg || ''),
-    birthDate: String(meta.birthDate || '2000-01-01'),
-    primaryPhone: String(meta.primaryPhone || ''),
-    secondaryPhone: meta.secondaryPhone ? String(meta.secondaryPhone) : undefined,
-    email: sessionUser.email || '',
-    profession: meta.profession ? String(meta.profession) : undefined,
-    socialMedia: meta.socialMedia ? String(meta.socialMedia) : undefined,
-    avatar: cleanAvatar(meta.avatar),
-    city: String(meta.city || ''),
-    state: String(meta.state || ''),
-    housingType: (meta.housingType as HousingType | undefined),
-    hasAdequateSpace: (meta.hasAdequateSpace as boolean | undefined),
-    hasOtherPets: (meta.hasOtherPets as boolean | undefined),
-    otherPetsDetails: meta.otherPetsDetails ? String(meta.otherPetsDetails) : undefined,
-    hasChildren: (meta.hasChildren as boolean | undefined),
-    speciesPreference: (meta.speciesPreference as SpeciesPreference | undefined),
-    sizePreference: (meta.sizePreference as SizePreference | undefined),
-    bio: meta.bio ? String(meta.bio) : undefined
-  };
+  console.warn('Não foi possível carregar o perfil autenticado:', error?.message || 'Perfil inexistente.');
+  return null;
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -294,42 +281,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // O perfil visual só é preenchido depois que uma sessão real do Supabase é confirmada.
   const [currentUser, setCurrentUserState] = useState<CurrentUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(() => Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  ));
 
   // 3. Pets State
-  const [pets, setPetsState] = useState<Pet[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.removeItem('acolher_pets_v1');
-        const savedPets = localStorage.getItem(STORAGE_KEYS.PETS);
-        if (savedPets) {
-          const parsed = JSON.parse(savedPets);
-          if (Array.isArray(parsed)) {
-            return parsed
-              .filter((p) => p && p.id !== '0ea90e62-d729-4900-bfd7-e5762fe1c9b6' && p.id !== 'pet-7' && p.name !== 'Nina')
-              .map(normalizePet);
-          }
-        }
-      } catch { }
-    }
-    return initialMockPets
-      .filter((p) => p.name !== 'Nina' && p.id !== '0ea90e62-d729-4900-bfd7-e5762fe1c9b6' && p.id !== 'pet-7')
-      .map(normalizePet);
-  });
+  const [pets, setPetsState] = useState<Pet[]>([]);
+  const [petsLoading, setPetsLoading] = useState(true);
+  const [petsError, setPetsError] = useState<string | null>(null);
 
   // 4. Favorites State - Isolado por usuário
   const [favorites, setFavoritesState] = useState<string[]>([]);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState<boolean>(false);
 
   // 5. Applications State - Inicia vazio (sem mocks fictícios)
-  const [applications, setApplicationsState] = useState<PreAdoptionApplication[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const savedApps = localStorage.getItem(STORAGE_KEYS.APPLICATIONS);
-        if (savedApps) return JSON.parse(savedApps);
-      } catch { }
-    }
-    return [];
-  });
+  const [applications, setApplicationsState] = useState<PreAdoptionApplication[]>([]);
+  const [applicationsLoading, setApplicationsLoading] = useState(false);
+  const [applicationsError, setApplicationsError] = useState<string | null>(null);
+  const [applicationsReloadToken, setApplicationsReloadToken] = useState(0);
 
   // 6. Toasts State
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -373,6 +342,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return null;
   }, []);
 
+  const reloadPets = useCallback(async () => {
+    if (!supabase) {
+      setPetsState([]);
+      setPetsError('A conexão com o catálogo não está configurada.');
+      setPetsLoading(false);
+      return;
+    }
+
+    setPetsLoading(true);
+    setPetsError(null);
+    try {
+      const { data, error } = await supabase
+        .from('pets')
+        .select('id, name, species, breed, size, approximate_age, age_category, sex, status, vaccinated, castrated, dewormed, vaccination_details, special_needs, photos, headline, story, temperament, temperament_description, guardian_id, guardian_name, guardian_type, guardian_phone, guardian_email, city, state, neighborhood, created_at')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setPetsState((data ?? []).map((pet) => mapearPetDoBanco(pet as Record<string, unknown>)));
+    } catch (error) {
+      console.warn('Não foi possível carregar o catálogo:', error);
+      setPetsState([]);
+      setPetsError('Não foi possível carregar os animais. Tente novamente.');
+    } finally {
+      setPetsLoading(false);
+    }
+  }, [supabase]);
+
   // Derive valid favorites: only keep IDs that actually exist in the current pets catalogue and if user is logged in
   const validFavorites = useMemo(() => {
     if (!currentUser) return [];
@@ -394,20 +390,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (isMounted) {
           setCurrentUserState(null);
           setFavoritesState([]);
-          try {
-            localStorage.removeItem(STORAGE_KEYS.USER);
-          } catch { }
+          setApplicationsState([]);
+          setApplicationsError(null);
+          setApplicationsLoading(false);
         }
         return;
       }
 
-      const profile = await fetchUserProfile(supabase!, sessionUser);
+      let profile: CurrentUser | null = null;
+      try {
+        profile = await fetchUserProfile(supabase!, sessionUser);
+      } catch (error) {
+        console.warn('Não foi possível consultar o perfil autenticado:', error);
+      }
       if (!isMounted) return;
 
       setCurrentUserState(profile);
-      try {
-        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(profile));
-      } catch { }
+      if (!profile) {
+        setFavoritesState([]);
+        setApplicationsState([]);
+        setApplicationsError(null);
+        setApplicationsLoading(false);
+        return;
+      }
 
       // Buscar favoritos reais do usuário autenticado no Supabase
       try {
@@ -419,41 +424,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (!favErr && Array.isArray(favData) && isMounted) {
           const ids = favData.map((f: { pet_id: string }) => f.pet_id);
           setFavoritesState(ids);
-          try {
-            localStorage.setItem(`acolher_favorites_${sessionUser.id}`, JSON.stringify(ids));
-          } catch { }
         } else {
-          try {
-            const cached = localStorage.getItem(`acolher_favorites_${sessionUser.id}`);
-            if (cached && isMounted) {
-              setFavoritesState(JSON.parse(cached));
-            }
-          } catch { }
+          setFavoritesState([]);
+          console.warn('Não foi possível carregar os favoritos:', favErr?.message);
         }
       } catch (err) {
         console.warn('Supabase favorites fetch warning:', err);
+        if (isMounted) setFavoritesState([]);
       }
     }
 
     // 1. Verificar sessão ativa no carregamento inicial / F5
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!isMounted) return;
-      if (session?.user) {
-        handleUserSession(session.user);
-      } else {
-        handleUserSession(null);
-      }
-    });
+    supabase.auth.getUser()
+      .then(async ({ data, error }) => {
+        if (!isMounted) return;
+        if (error) console.warn('Não foi possível validar a sessão:', error.message);
+        await handleUserSession(data.user ?? null);
+      })
+      .catch((error) => {
+        console.warn('Não foi possível validar a sessão:', error);
+        if (isMounted) setCurrentUserState(null);
+      })
+      .finally(() => {
+        if (isMounted) setAuthLoading(false);
+      });
 
     // 2. Escutar mudanças em tempo real (LOGIN, LOGOUT, REFRESH_TOKEN)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
         if (session?.user) {
-          await handleUserSession(session.user);
+          window.setTimeout(() => void handleUserSession(session.user), 0);
         }
       } else if (event === 'SIGNED_OUT') {
-        await handleUserSession(null);
+        window.setTimeout(() => void handleUserSession(null), 0);
       }
     });
 
@@ -465,73 +469,48 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Fetch Pets and Applications from Supabase on mount
   useEffect(() => {
-    if (!supabase) return;
-
     let isMounted = true;
 
     async function syncFromSupabase() {
       try {
-        // 1. Fetch Pets
-        const { data: remotePets, error: petsError } = await supabase!
-          .from('pets')
-          .select('*')
-          .order('created_at', { ascending: false });
+        await reloadPets();
 
-        if (!petsError && Array.isArray(remotePets) && remotePets.length > 0 && isMounted) {
-          const mappedPets = remotePets.map((p: Record<string, unknown>) =>
-            normalizePet({
-              id: p.id,
-              name: p.name,
-              species: p.species,
-              breed: p.breed,
-              size: p.size,
-              approximateAge: p.approximate_age,
-              ageCategory: p.age_category,
-              sex: p.sex,
-              status: p.status,
-              vaccinated: p.vaccinated,
-              castrated: p.castrated,
-              dewormed: p.dewormed,
-              vaccinationDetails: p.vaccination_details,
-              specialNeeds: p.special_needs,
-              photos: p.photos,
-              headline: p.headline,
-              story: p.story,
-              temperament: p.temperament,
-              temperamentDescription: p.temperament_description,
-              guardianId: p.guardian_id,
-              guardianName: p.guardian_name,
-              guardianType: p.guardian_type,
-              guardianPhone: p.guardian_phone,
-              guardianEmail: p.guardian_email,
-              location: {
-                city: p.city || 'São Paulo',
-                state: p.state || 'SP',
-                neighborhood: p.neighborhood || 'Vila Mariana'
-              },
-              createdAt: p.created_at
-            })
-          );
+        if (!supabase) {
+          if (isMounted) {
+            setApplicationsState([]);
+            setApplicationsError('A conexão com as candidaturas não está configurada.');
+            setApplicationsLoading(false);
+          }
+          return;
+        }
 
-          // Mantém pets criados apenas localmente (cadastro não aceito pelo banco) para não sumirem ao recarregar
-          setPetsState((prev) => {
-            const remoteIds = new Set(mappedPets.map((p) => p.id));
-            const locais = prev.filter((p) => /^pet-\d{13}$/.test(p.id) && !remoteIds.has(p.id));
-            const merged = [...locais, ...mappedPets];
-            try {
-              localStorage.setItem(STORAGE_KEYS.PETS, JSON.stringify(merged));
-            } catch { }
-            return merged;
-          });
+        if (!currentUser) {
+          if (isMounted) {
+            setApplicationsState([]);
+            setApplicationsError(null);
+            setApplicationsLoading(false);
+          }
+          return;
+        }
+
+        if (isMounted) {
+          setApplicationsLoading(true);
+          setApplicationsError(null);
         }
 
         // 2. Fetch Applications with joined pets and messages
-        const { data: remoteApps, error: appsError } = await supabase!
+        const { data: remoteApps, error: appsError } = await supabase
           .from('applications')
-          .select('*, pets(id, name, photos, species), application_messages(*)')
+          .select('id, pet_id, candidate_name, candidate_email, candidate_phone, guardian_id, status, candidate, housing, routine, finance, dossier, automated_analysis, guardian_notes, created_at, pet_name, pet_photo, pet_species, guardian_name, guardian_type, candidate_id, pets(id, name, photos, species), application_messages(id, sender_name, sender_role, message, created_at)')
           .order('created_at', { ascending: false });
 
-        if (!appsError && Array.isArray(remoteApps) && remoteApps.length > 0 && isMounted) {
+        if (appsError) {
+          console.warn('Não foi possível carregar as candidaturas:', appsError.message);
+          if (isMounted) {
+            setApplicationsState([]);
+            setApplicationsError('Não foi possível carregar as candidaturas. Tente novamente.');
+          }
+        } else if (Array.isArray(remoteApps) && isMounted) {
           const mappedApps: PreAdoptionApplication[] = remoteApps.map((a: Record<string, unknown>) => {
             const candidate = (a.candidate || {}) as Record<string, string>;
             const housing = (a.housing || {}) as Record<string, unknown>;
@@ -541,7 +520,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
             const petObj = (a.pets && typeof a.pets === 'object' ? a.pets : null) as Record<string, unknown> | null;
             const petPhotos = petObj && Array.isArray(petObj.photos) ? (petObj.photos as string[]) : [];
-            const petPhoto = petPhotos[0] || String(a.pet_photo || 'https://images.unsplash.com/photo-1543466835-00a7907e9de1?q=80&w=1000&auto=format&fit=crop');
+            const petPhoto = normalizarFotosPet(
+              petPhotos.length > 0 ? petPhotos : [a.pet_photo]
+            )[0];
             const petName = petObj?.name ? String(petObj.name) : String(a.pet_name || 'Pet');
             const petSpecies = (petObj?.species || a.pet_species || 'dog') as Pet['species'];
 
@@ -559,15 +540,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 }))
               : Array.isArray(a.messages)
                 ? (a.messages as PreAdoptionApplication['messages'])
-                : [
-                  {
-                    id: `msg-${a.id}`,
-                    senderName: String(candidate.name || a.candidate_name || 'Candidato'),
-                    senderRole: 'adopter' as const,
-                    content: 'Candidatura enviada.',
-                    sentAt: String(a.created_at || new Date().toISOString())
-                  }
-                ];
+                : [];
 
             return {
               id: String(a.id),
@@ -575,64 +548,62 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               petName,
               petPhoto,
               petSpecies,
-              guardianId: String(a.guardian_id || 'guardian-1'),
-              guardianName: String(a.guardian_name || 'ONG Patinhas com Amor'),
+              guardianId: String(a.guardian_id || ''),
+              guardianName: String(a.guardian_name || 'Responsável não informado'),
               guardianType: (a.guardian_type as Pet['guardianType']) || 'ngo',
-              candidateId: String(a.candidate_id || candidate.id || 'candidate-1'),
+              candidateId: String(a.candidate_id || candidate.id || ''),
               candidate: {
                 name: candidate.name || String(a.candidate_name || 'Candidato'),
-                birthDate: candidate.birthDate || '2000-01-01',
-                profession: candidate.profession || 'Não informado',
+                birthDate: candidate.birthDate || '',
+                profession: candidate.profession || '',
                 primaryPhone: candidate.primaryPhone || candidate.phone || String(a.candidate_phone || ''),
                 email: candidate.email || String(a.candidate_email || ''),
                 socialMedia: candidate.socialMedia || '',
-                cpf: candidate.cpf || '000.000.000-00',
-                rg: candidate.rg || '00.000.000-0'
+                cpf: candidate.cpf || '',
+                rg: candidate.rg || ''
               },
               housingType: (housing.housingType as PreAdoptionApplication['housingType']) || 'casa',
-              housingStatus: (housing.housingStatus as PreAdoptionApplication['housingStatus']) || 'proprio',
-              landlordPermission: housing.landlordPermission !== undefined ? !!housing.landlordPermission : true,
-              hasProtection: housing.hasProtection !== undefined ? !!housing.hasProtection : true,
+              housingStatus: (housing.housingStatus as PreAdoptionApplication['housingStatus']) || 'alugado',
+              landlordPermission: !!housing.landlordPermission,
+              hasProtection: !!housing.hasProtection,
               protectionDetails: String(housing.protectionDetails || ''),
-              accessArea: (housing.accessArea as PreAdoptionApplication['accessArea']) || 'livre_total',
-              adultsCount: typeof routine.adultsCount === 'number' ? routine.adultsCount : 2,
+              accessArea: (housing.accessArea as PreAdoptionApplication['accessArea']) || 'area_especifica',
+              adultsCount: typeof routine.adultsCount === 'number' ? routine.adultsCount : 0,
               childrenCount: typeof routine.childrenCount === 'number' ? routine.childrenCount : 0,
-              familyAgreement: routine.familyAgreement !== undefined ? !!routine.familyAgreement : true,
+              familyAgreement: !!routine.familyAgreement,
               allergyCases: !!routine.allergyCases,
               allergyDetails: String(routine.allergyDetails || ''),
-              hoursAlone: typeof routine.hoursAlone === 'number' ? routine.hoursAlone : 4,
-              travelCarePlan: String(routine.travelCarePlan || 'Hotelzinho ou parente'),
+              hoursAlone: typeof routine.hoursAlone === 'number' ? routine.hoursAlone : 0,
+              travelCarePlan: String(routine.travelCarePlan || ''),
               hasCurrentPets: !!routine.hasCurrentPets,
               currentPetsDetails: Array.isArray(routine.currentPetsDetails) ? (routine.currentPetsDetails as PreAdoptionApplication['currentPetsDetails']) : undefined,
-              previousPetsHistory: String(routine.previousPetsHistory || 'Histórico de cuidados responsável.'),
-              costAwareness: finance.costAwareness !== undefined ? !!finance.costAwareness : true,
+              previousPetsHistory: String(routine.previousPetsHistory || ''),
+              costAwareness: !!finance.costAwareness,
               status: (a.status as ApplicationStatus) || 'pending',
               createdAt: String(a.created_at || new Date().toISOString()),
-              notes: Array.isArray(a.notes) ? (a.notes as string[]) : ['Candidatura registrada.'],
+              notes: Array.isArray(a.notes) ? (a.notes as string[]) : [],
               guardianNotes: String(a.guardian_notes || ''),
               messages: rawMessages,
               automatedAnalysis: (dossier.automatedAnalysis || a.automated_analysis || {
-                suitabilityScore: 85,
-                verdict: 'Recomendada',
-                strengths: ['Dossiê completo'],
+                suitabilityScore: 0,
+                verdict: 'Análise indisponível',
+                strengths: [],
                 attentionPoints: [],
                 suggestedQuestions: []
               }) as NonNullable<PreAdoptionApplication['automatedAnalysis']>
             };
           });
 
-          setApplicationsState((prev) => {
-            const remoteIds = new Set(mappedApps.map((a) => a.id));
-            const filteredPrev = prev.filter((a) => !remoteIds.has(a.id) && !a.id.startsWith('app-'));
-            const merged = [...mappedApps, ...filteredPrev];
-            try {
-              localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(merged));
-            } catch { }
-            return merged;
-          });
+          setApplicationsState(mappedApps);
         }
       } catch (err) {
-        console.warn('Sync from Supabase skipped or failed:', err);
+        console.warn('Não foi possível sincronizar as candidaturas:', err);
+        if (isMounted) {
+          setApplicationsState([]);
+          setApplicationsError('Não foi possível carregar as candidaturas. Tente novamente.');
+        }
+      } finally {
+        if (isMounted) setApplicationsLoading(false);
       }
     }
 
@@ -641,25 +612,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isMounted = false;
     };
-  }, [supabase]);
+  }, [applicationsReloadToken, currentUser, reloadPets, supabase]);
 
   // Set Theme with persistence
   const setTheme = useCallback((newTheme: ThemeMode) => {
     setThemeState(newTheme);
     try {
       localStorage.setItem(STORAGE_KEYS.THEME, newTheme);
-    } catch { }
-  }, []);
-
-  // Set Current User with persistence
-  const setCurrentUser = useCallback((user: CurrentUser | null) => {
-    setCurrentUserState(user);
-    try {
-      if (user) {
-        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
-      } else {
-        localStorage.removeItem(STORAGE_KEYS.USER);
-      }
     } catch { }
   }, []);
 
@@ -690,27 +649,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [removeToast]);
 
   const logout = useCallback(async () => {
-    if (supabase) {
-      try {
-        await supabase.auth.signOut();
-      } catch (err) {
-        console.warn('Supabase signOut error:', err);
-      }
+    if (!supabase) {
+      showToast('Não foi possível sair', 'A conexão com a autenticação não está configurada.', 'error');
+      return;
+    }
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) throw error;
+    } catch (err) {
+      console.warn('Não foi possível encerrar a sessão:', err);
+      showToast('Não foi possível sair', 'Tente novamente em alguns instantes.', 'error');
+      return;
     }
     setCurrentUserState(null);
     setFavoritesState([]);
-    try {
-      localStorage.removeItem(STORAGE_KEYS.USER);
-      localStorage.removeItem(STORAGE_KEYS.FAVORITES);
-    } catch { }
+    setApplicationsState([]);
+    setApplicationsError(null);
+    setApplicationsLoading(false);
     showToast('Sessão encerrada', 'Você saiu da sua conta com sucesso.', 'info');
   }, [supabase, showToast]);
 
-  // Atualizar perfil do usuário com sincronização no Supabase e persistência local
+  // Atualizar o perfil persistido no Supabase e refletir o resultado confirmado na interface.
   const updateUserProfile = useCallback(async (updates: Partial<CurrentUser> & { avatar?: string | null }) => {
-    if (!currentUser) return;
+    if (!currentUser || !supabase) {
+      showToast('Não foi possível salvar', 'Sua sessão não está disponível. Entre novamente.', 'error');
+      return false;
+    }
     const isRemovingAvatar = updates.avatar === null || updates.avatar === '';
     const newAvatar = isRemovingAvatar ? undefined : (updates.avatar ?? currentUser.avatar);
+    if (newAvatar?.startsWith('data:')) {
+      showToast('Foto não salva', 'A imagem precisa ser enviada ao armazenamento antes de salvar o perfil.', 'error');
+      return false;
+    }
 
     // Regra estrita: a data de nascimento só pode ser preenchida uma única vez no cadastro
     // Se o usuário atual já tiver birthDate registrado, ele não pode ser sobrescrito
@@ -724,30 +694,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ...(safeBirthDate && currentUser.role === 'adopter' ? { birthDate: safeBirthDate } : {}),
       avatar: newAvatar
     } as CurrentUser;
+    let falhaSincronizacaoPets = false;
 
-    setCurrentUserState(updatedUser);
     try {
-      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
-    } catch { }
-
-    if (supabase) {
-      try {
-        // Envia apenas metadados leves ao auth para evitar inflar o token JWT nos cookies (prevenindo erro HTTP 431)
-        const safeAuthData: Record<string, unknown> = {
-          name: updatedUser.name,
-          role: updatedUser.role
-        };
-        // Apenas URLs remotas leves são gravadas em metadados do Auth, nunca Base64 (data:image/...)
-        if (newAvatar && (newAvatar.startsWith("http://") || newAvatar.startsWith("https://"))) {
-          safeAuthData.avatar = newAvatar;
-        } else {
-          safeAuthData.avatar = null;
-        }
-
-        await supabase.auth.updateUser({
-          data: safeAuthData
-        });
-
         const dbUpdates: Record<string, unknown> = {
           name: updatedUser.name,
           primary_phone: updatedUser.primaryPhone,
@@ -778,112 +727,131 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (updatedUser.socialMedia !== undefined) dbUpdates.social_media = updatedUser.socialMedia;
         }
 
-        await supabase
+        const { data: savedProfile, error: profileError } = await supabase
           .from('profiles')
           .update(dbUpdates)
-          .eq('id', updatedUser.id);
-      } catch (err) {
-        console.warn('Supabase profile update note:', err);
-      }
+          .eq('id', updatedUser.id)
+          .select('id')
+          .maybeSingle();
+
+        if (profileError || !savedProfile) {
+          throw profileError || new Error('O perfil não foi localizado para atualização.');
+        }
+
+        if (updatedUser.role === 'guardian') {
+          const { error: petsError } = await supabase
+            .from('pets')
+            .update({
+              guardian_name: updatedUser.name,
+              guardian_phone: updatedUser.primaryPhone,
+              guardian_email: updatedUser.email,
+              city: updatedUser.city,
+              state: updatedUser.state,
+              neighborhood: updatedUser.neighborhood
+            })
+            .eq('guardian_id', updatedUser.id);
+          if (petsError) {
+            falhaSincronizacaoPets = true;
+            console.warn('O perfil foi salvo, mas os anúncios não foram sincronizados:', petsError.message);
+          }
+
+          if (!petsError) {
+            setPetsState((anteriores) => anteriores.map((pet) => pet.guardianId === updatedUser.id ? {
+              ...pet,
+              guardianName: updatedUser.name,
+              guardianPhone: updatedUser.primaryPhone,
+              guardianEmail: updatedUser.email,
+              location: {
+                city: updatedUser.city,
+                state: updatedUser.state,
+                neighborhood: updatedUser.neighborhood
+              }
+            } : pet));
+          }
+        }
+    } catch (err) {
+      console.warn('Não foi possível atualizar o perfil:', err);
+      showToast('Não foi possível salvar', 'Confira sua conexão e tente novamente.', 'error');
+      return false;
     }
 
-    showToast('Perfil atualizado com sucesso!', 'Suas informações foram salvas.', 'success');
+    setCurrentUserState(updatedUser);
+    if (falhaSincronizacaoPets) {
+      showToast('Perfil salvo', 'As informações do perfil foram atualizadas, mas os anúncios serão sincronizados após a atualização do banco.', 'warning');
+    } else {
+      showToast('Perfil atualizado com sucesso!', 'Suas informações foram salvas.', 'success');
+    }
+    return true;
   }, [currentUser, showToast, supabase]);
 
   // Pets Management
-  const addPet = useCallback((newPetData: Omit<Pet, 'id' | 'createdAt'>) => {
-    const rawPet = {
-      ...newPetData,
-      id: `pet-${Date.now()}`,
-      createdAt: new Date().toISOString()
-    };
-    const newPet = normalizePet(rawPet);
-
-    // 1. Optimistic Local Update
-    setPetsState((prev) => {
-      const updated = [newPet, ...prev];
-      try {
-        localStorage.setItem(STORAGE_KEYS.PETS, JSON.stringify(updated));
-      } catch { }
-      return updated;
-    });
-
-    // 2. Remote Supabase Insertion
-    if (supabase) {
-      (async () => {
-        try {
-          const { data, error } = await supabase
-            .from('pets')
-            .insert({
-              name: newPet.name,
-              species: newPet.species,
-              breed: newPet.breed,
-              size: newPet.size,
-              approximate_age: newPet.approximateAge,
-              age_category: newPet.ageCategory,
-              sex: newPet.sex,
-              status: newPet.status,
-              vaccinated: newPet.vaccinated,
-              castrated: newPet.castrated,
-              dewormed: newPet.dewormed,
-              vaccination_details: newPet.vaccinationDetails,
-              special_needs: newPet.specialNeeds,
-              photos: newPet.photos,
-              headline: newPet.headline,
-              story: newPet.story,
-              temperament: newPet.temperament,
-              temperament_description: newPet.temperamentDescription,
-              guardian_id: newPet.guardianId,
-              guardian_name: newPet.guardianName,
-              guardian_type: newPet.guardianType,
-              guardian_phone: newPet.guardianPhone,
-              guardian_email: newPet.guardianEmail,
-              city: newPet.location.city,
-              state: newPet.location.state,
-              neighborhood: newPet.location.neighborhood
-            })
-            .select();
-
-          if (error) {
-            console.warn('Supabase pet insert failed, kept in localStorage:', error.message);
-            // Evita fotos órfãs no Storage quando o cadastro não foi persistido
-            await removerFotosDoStorage(supabase, newPet.photos);
-            showToast(
-              'Cadastro salvo só neste navegador',
-              'Não foi possível gravar no banco. Entre com uma conta real de ONG/Protetor para publicar o animal de verdade.',
-              'warning'
-            );
-          } else if (data && data[0]) {
-            const created = data[0];
-            setPetsState((prev) =>
-              prev.map((p) => (p.id === newPet.id ? { ...p, id: created.id } : p))
-            );
-          }
-        } catch (err) {
-          console.warn('Supabase pet insert error:', err);
-          await removerFotosDoStorage(supabase, newPet.photos);
-        }
-      })();
+  const addPet = useCallback(async (newPetData: Omit<Pet, 'id' | 'createdAt'>) => {
+    if (!supabase || currentUser?.role !== 'guardian' || newPetData.guardianId !== currentUser.id) {
+      showToast('Cadastro não permitido', 'Entre com um perfil de ONG ou doador para publicar animais.', 'error');
+      return false;
     }
 
-    showToast('Animal cadastrado!', `${newPet.name} já está visível para adoção.`, 'success');
-  }, [showToast, supabase]);
+    try {
+      const { data, error } = await supabase
+            .from('pets')
+            .insert({
+              name: newPetData.name,
+              species: newPetData.species,
+              breed: newPetData.breed,
+              size: newPetData.size,
+              approximate_age: newPetData.approximateAge,
+              age_category: newPetData.ageCategory,
+              sex: newPetData.sex,
+              status: newPetData.status,
+              vaccinated: newPetData.vaccinated,
+              castrated: newPetData.castrated,
+              dewormed: newPetData.dewormed,
+              vaccination_details: newPetData.vaccinationDetails,
+              special_needs: newPetData.specialNeeds,
+              photos: newPetData.photos,
+              headline: newPetData.headline,
+              story: newPetData.story,
+              temperament: newPetData.temperament,
+              temperament_description: newPetData.temperamentDescription,
+              guardian_id: currentUser.id,
+              guardian_name: currentUser.name,
+              guardian_type: currentUser.guardianType,
+              guardian_phone: currentUser.primaryPhone,
+              guardian_email: currentUser.email,
+              city: currentUser.city,
+              state: currentUser.state,
+              neighborhood: currentUser.neighborhood
+            })
+            .select()
+            .single();
 
-  const updatePet = useCallback((id: string, updates: Partial<Pet>) => {
-    const fotosAnteriores = pets.find((p) => p.id === id)?.photos ?? [];
+      if (error || !data) throw error || new Error('O banco não retornou o animal cadastrado.');
 
-    setPetsState((prev) => {
-      const updated = prev.map((p) => (p.id === id ? { ...p, ...updates } : p));
-      try {
-        localStorage.setItem(STORAGE_KEYS.PETS, JSON.stringify(updated));
-      } catch { }
-      return updated;
-    });
+      const petCriado = mapearPetDoBanco(data as Record<string, unknown>);
+      setPetsState((anteriores) => [petCriado, ...anteriores]);
+      showToast('Animal cadastrado!', `${petCriado.name} já está visível para adoção.`, 'success');
+      return true;
+    } catch (err) {
+      console.warn('Não foi possível cadastrar o animal:', err);
+      await removerFotosDoStorage(supabase, newPetData.photos);
+      showToast('Não foi possível cadastrar', 'O animal não foi publicado. Confira os dados e tente novamente.', 'error');
+      return false;
+    }
+  }, [currentUser, showToast, supabase]);
 
-    if (supabase) {
-      (async () => {
-        try {
-          const remoteUpdates: Record<string, unknown> = {};
+  const updatePet = useCallback(async (id: string, updates: Partial<Pet>) => {
+    const petAnterior = pets.find((p) => p.id === id);
+    const pertenceAoUsuario = currentUser?.role === 'guardian' && !!petAnterior && petAnterior.guardianId === currentUser.id;
+
+    if (!pertenceAoUsuario || !supabase) {
+      showToast('Edição não permitida', 'Você só pode editar animais publicados por este perfil.', 'error');
+      return false;
+    }
+
+    const fotosAnteriores = petAnterior.photos;
+
+    try {
+        const remoteUpdates: Record<string, unknown> = {};
           if (updates.name !== undefined) remoteUpdates.name = updates.name;
           if (updates.species !== undefined) remoteUpdates.species = updates.species;
           if (updates.breed !== undefined) remoteUpdates.breed = updates.breed;
@@ -903,58 +871,83 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (updates.castrated !== undefined) remoteUpdates.castrated = updates.castrated;
           if (updates.dewormed !== undefined) remoteUpdates.dewormed = updates.dewormed;
 
-          if (Object.keys(remoteUpdates).length > 0) {
-            const { error } = await supabase
-              .from('pets')
-              .update(remoteUpdates)
-              .eq('id', id);
-            if (error) console.warn('Supabase pet update failed:', error.message);
+        if (Object.keys(remoteUpdates).length > 0) {
+          const { data, error } = await supabase
+            .from('pets')
+            .update(remoteUpdates)
+            .eq('id', id)
+            .eq('guardian_id', currentUser.id)
+            .select('id')
+            .maybeSingle();
 
+          if (error || !data) {
             if (updates.photos !== undefined) {
-              const novas = updates.photos;
-              // Sucesso: remove do Storage as fotos que saíram. Falha: descarta as recém-enviadas.
-              const descartar = error
-                ? novas.filter((url) => !fotosAnteriores.includes(url))
-                : fotosAnteriores.filter((url) => !novas.includes(url));
-              await removerFotosDoStorage(supabase, descartar);
+              await removerFotosDoStorage(
+                supabase,
+                updates.photos.filter((url) => !fotosAnteriores.includes(url))
+              );
             }
+
+            console.warn('Supabase pet update failed:', error?.message || 'Nenhum animal pertencente ao perfil foi atualizado.');
+            showToast('Não foi possível salvar', 'Confira sua conexão e tente novamente.', 'error');
+            return false;
           }
-        } catch (err) {
-          console.warn('Supabase pet update error:', err);
+
+          setPetsState((anteriores) =>
+            anteriores.map((pet) => pet.id === id ? { ...pet, ...updates } : pet)
+          );
+
+          if (updates.photos !== undefined) {
+            await removerFotosDoStorage(
+              supabase,
+              fotosAnteriores.filter((url) => !updates.photos!.includes(url))
+            );
+          }
         }
-      })();
+    } catch (err) {
+        console.warn('Supabase pet update error:', err);
+        if (updates.photos !== undefined) {
+          await removerFotosDoStorage(
+            supabase,
+            updates.photos.filter((url) => !fotosAnteriores.includes(url))
+          );
+        }
+        showToast('Não foi possível salvar', 'Ocorreu um erro inesperado. Tente novamente.', 'error');
+        return false;
     }
 
     showToast('Pet atualizado', 'As alterações foram salvas com sucesso.', 'success');
-  }, [pets, showToast, supabase]);
+    return true;
+  }, [currentUser, pets, showToast, supabase]);
 
-  const deletePet = useCallback((id: string) => {
+  const deletePet = useCallback(async (id: string) => {
     const petToDelete = pets.find((p) => p.id === id);
-    const petName = petToDelete?.name || 'O animal';
-    const updated = pets.filter((p) => p.id !== id);
-
-    setPetsState(updated);
-    try {
-      localStorage.setItem(STORAGE_KEYS.PETS, JSON.stringify(updated));
-    } catch { }
-
-    showToast('Pet removido', `${petName} foi removido do catálogo.`, 'info');
-
-    if (supabase) {
-      (async () => {
-        try {
-          const { error } = await supabase.from('pets').delete().eq('id', id);
-          if (error) {
-            console.warn('Supabase pet delete failed:', error.message);
-          } else if (petToDelete) {
-            await removerFotosDoStorage(supabase, petToDelete.photos);
-          }
-        } catch (err) {
-          console.warn('Supabase pet delete error:', err);
-        }
-      })();
+    if (!supabase || currentUser?.role !== 'guardian' || !petToDelete || petToDelete.guardianId !== currentUser.id) {
+      showToast('Exclusão não permitida', 'Você só pode remover animais publicados por este perfil.', 'error');
+      return false;
     }
-  }, [pets, showToast, supabase]);
+
+    try {
+      const { data, error } = await supabase
+        .from('pets')
+        .delete()
+        .eq('id', id)
+        .eq('guardian_id', currentUser.id)
+        .select('id')
+        .maybeSingle();
+
+      if (error || !data) throw error || new Error('O animal não foi localizado para exclusão.');
+
+      setPetsState((anteriores) => anteriores.filter((pet) => pet.id !== id));
+      await removerFotosDoStorage(supabase, petToDelete.photos);
+      showToast('Pet removido', `${petToDelete.name} foi removido do catálogo.`, 'info');
+      return true;
+    } catch (err) {
+      console.warn('Não foi possível excluir o animal:', err);
+      showToast('Não foi possível excluir', 'O animal continua publicado. Tente novamente.', 'error');
+      return false;
+    }
+  }, [currentUser, pets, showToast, supabase]);
 
   // Controle de acesso reutilizável
   const requireAuth = useCallback((feature: AuthFeature = 'default', options?: { redirectTo?: string }) => {
@@ -964,51 +957,42 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser]);
 
   const closeAuthPrompt = useCallback(() => setAuthPrompt(null), []);
+  const reloadApplications = useCallback(() => {
+    setApplicationsReloadToken((token) => token + 1);
+  }, []);
 
   // Favorites
   const toggleFavorite = useCallback(async (petId: string) => {
-    if (!requireAuth('favorites')) return;
-    if (!currentUser) return;
+    if (!requireAuth('favorites') || !currentUser) return false;
+    if (!supabase) {
+      showToast('Favoritos indisponíveis', 'Não foi possível conectar ao banco de dados.', 'error');
+      return false;
+    }
 
     const isCurrentlyFav = validFavorites.includes(petId);
     const updated = isCurrentlyFav
       ? validFavorites.filter((id) => id !== petId)
       : [...validFavorites, petId];
 
-    setFavoritesState(updated);
     try {
-      localStorage.setItem(`acolher_favorites_${currentUser.id}`, JSON.stringify(updated));
-    } catch { }
-
-    if (supabase) {
-      try {
-        if (isCurrentlyFav) {
-          const { error } = await supabase
-            .from('favorites')
-            .delete()
-            .eq('user_id', currentUser.id)
-            .eq('pet_id', petId);
-          if (error && error.code !== 'PGRST205') {
-            console.warn('Supabase favorite delete error:', error.message);
-          }
-        } else {
-          const { error } = await supabase
-            .from('favorites')
-            .insert({ user_id: currentUser.id, pet_id: petId });
-          if (error && error.code !== 'PGRST205') {
-            console.warn('Supabase favorite insert error:', error.message);
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase favorite toggle error:', err);
-      }
+      const { error } = isCurrentlyFav
+        ? await supabase.from('favorites').delete().eq('user_id', currentUser.id).eq('pet_id', petId)
+        : await supabase.from('favorites').insert({ user_id: currentUser.id, pet_id: petId });
+      if (error) throw error;
+    } catch (err) {
+      console.warn('Não foi possível atualizar o favorito:', err);
+      showToast('Não foi possível atualizar', 'Tente novamente em alguns instantes.', 'error');
+      return false;
     }
+
+    setFavoritesState(updated);
 
     if (isCurrentlyFav) {
       showToast('Removido dos favoritos', undefined, 'info');
     } else {
       showToast('Adicionado aos favoritos!', 'Você pode acompanhar seus pets favoritos.', 'success');
     }
+    return true;
   }, [currentUser, requireAuth, validFavorites, showToast, supabase]);
 
   const isFavorite = useCallback((petId: string) => {
@@ -1270,71 +1254,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Applications
-  const submitApplication = useCallback((data: Omit<PreAdoptionApplication, 'id' | 'createdAt' | 'status' | 'notes' | 'messages' | 'automatedAnalysis'>): PreAdoptionApplication => {
-    // Garantir imutabilidade da data de nascimento no dossiê de adoção
-    const userBirthDate = currentUser?.role === 'adopter' ? (currentUser as AdopterProfile).birthDate : undefined;
+  const submitApplication = useCallback(async (data: Omit<PreAdoptionApplication, 'id' | 'createdAt' | 'status' | 'notes' | 'messages' | 'automatedAnalysis'>): Promise<PreAdoptionApplication | null> => {
+    if (!supabase || currentUser?.role !== 'adopter') {
+      showToast('Candidatura não enviada', 'Entre com um perfil de adotante para continuar.', 'error');
+      return null;
+    }
+
+    const userBirthDate = (currentUser as AdopterProfile).birthDate;
     const effectiveBirthDate = userBirthDate || data.candidate.birthDate;
+    if (!effectiveBirthDate || calculateAge(effectiveBirthDate) < 21) {
+      showToast('Candidatura não enviada', 'É necessário ter 21 anos completos e uma data de nascimento cadastrada.', 'error');
+      return null;
+    }
+    const candidaturaAtiva = applications.some((application) =>
+      application.petId === data.petId
+      && application.candidateId === currentUser.id
+      && application.status !== 'rejected'
+    );
+    if (candidaturaAtiva) {
+      showToast('Candidatura já existente', 'Você já possui uma candidatura para este animal.', 'info');
+      return null;
+    }
+
     const sanitizedData = {
       ...data,
+      candidateId: currentUser.id,
       candidate: {
         ...data.candidate,
-        birthDate: effectiveBirthDate
+        name: currentUser.name,
+        email: currentUser.email,
+        birthDate: effectiveBirthDate,
+        primaryPhone: currentUser.primaryPhone,
+        cpf: currentUser.cpf,
+        rg: currentUser.rg || ''
       }
     };
 
     const analysis = analyzeDossier(sanitizedData);
-    const newApp: PreAdoptionApplication = {
-      ...sanitizedData,
-      id: `app-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-      status: 'pending',
-      notes: ['Candidatura submetida através do ConnectPet.'],
-      guardianNotes: '',
-      messages: [
-        {
-          id: `msg-${Date.now()}`,
-          senderName: data.candidate.name,
-          senderRole: 'adopter',
-          content: `Olá! Acabei de enviar minha candidatura para adotar ${data.petName}. Fico à disposição para conversar e agendar uma visita!`,
-          sentAt: new Date().toISOString()
-        }
-      ],
-      automatedAnalysis: analysis
-    };
-
-    setApplicationsState((prev) => {
-      const updated = [newApp, ...prev];
-      try {
-        localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(updated));
-      } catch { }
-      return updated;
-    });
-
-    // Mark pet as in_process
-    setPetsState((prev) => {
-      const updated = prev.map((p) => (p.id === data.petId ? { ...p, status: 'in_process' as const } : p));
-      try {
-        localStorage.setItem(STORAGE_KEYS.PETS, JSON.stringify(updated));
-      } catch { }
-      return updated;
-    });
-
-    showToast('Candidatura enviada!', `Seu dossiê para adotar ${data.petName} foi recebido pela ONG.`, 'success');
-
-    // Remote Supabase Application Insertion
-    if (supabase) {
-      (async () => {
-        try {
-          const { data: created, error } = await supabase
+    try {
+      const { data: created, error } = await supabase
             .from('applications')
             .insert({
-              pet_id: data.petId.startsWith('pet-') ? null : data.petId,
-              candidate_name: data.candidate.name,
-              candidate_email: data.candidate.email,
-              candidate_phone: data.candidate.primaryPhone || '',
+              pet_id: data.petId,
+              candidate_name: sanitizedData.candidate.name,
+              candidate_email: currentUser.email,
+              candidate_phone: sanitizedData.candidate.primaryPhone || '',
               guardian_id: data.guardianId,
               status: 'pending',
-              candidate: data.candidate,
+              candidate: sanitizedData.candidate,
               housing: {
                 housingType: data.housingType,
                 housingStatus: data.housingStatus,
@@ -1363,174 +1330,149 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               },
               automated_analysis: analysis
             })
-            .select();
+            .select('id, created_at')
+            .single();
 
-          if (error) {
-            console.warn('Supabase application insert note:', error.message);
-          } else if (created && created[0]) {
-            const newAppId = created[0].id;
-            setApplicationsState((prev) =>
-              prev.map((app) => (app.id === newApp.id ? { ...app, id: newAppId } : app))
-            );
+      if (error || !created) throw error || new Error('O banco não retornou a candidatura criada.');
 
-            // Inserir mensagem inicial no Supabase
-            await supabase.from('application_messages').insert({
-              application_id: newAppId,
-              sender_id: data.candidateId,
-              sender_name: data.candidate.name,
+      const conteudoMensagem = `Olá! Acabei de enviar minha candidatura para adotar ${data.petName}. Fico à disposição para conversar e agendar uma visita!`;
+      const { data: mensagemCriada, error: erroMensagem } = await supabase
+        .from('application_messages')
+        .insert({
+              application_id: created.id,
+              sender_id: currentUser.id,
+              sender_name: sanitizedData.candidate.name,
               sender_role: 'candidate',
-              message: `Olá! Acabei de enviar minha candidatura para adotar ${data.petName}. Fico à disposição para conversar e agendar uma visita!`
-            });
-          }
-        } catch (err) {
-          console.warn('Supabase app insert error:', err);
-        }
-      })();
+              message: conteudoMensagem
+        })
+        .select('id, created_at')
+        .maybeSingle();
+
+      if (erroMensagem) console.warn('A candidatura foi criada, mas a mensagem inicial falhou:', erroMensagem.message);
+
+      const newApp: PreAdoptionApplication = {
+        ...sanitizedData,
+        id: String(created.id),
+        createdAt: String(created.created_at),
+        status: 'pending',
+        notes: [],
+        guardianNotes: '',
+        messages: mensagemCriada ? [{
+          id: String(mensagemCriada.id),
+          senderName: sanitizedData.candidate.name,
+          senderRole: 'adopter',
+          content: conteudoMensagem,
+          sentAt: String(mensagemCriada.created_at)
+        }] : [],
+        automatedAnalysis: analysis
+      };
+
+      setApplicationsState((anteriores) => [newApp, ...anteriores]);
+      setPetsState((anteriores) => anteriores.map((pet) =>
+        pet.id === data.petId ? { ...pet, status: 'in_process' as const } : pet
+      ));
+      showToast('Candidatura enviada!', `Seu dossiê para adotar ${data.petName} foi recebido pela ONG.`, 'success');
+      return newApp;
+    } catch (err) {
+      console.warn('Não foi possível enviar a candidatura:', err);
+      showToast('Candidatura não enviada', 'Confira sua conexão e tente novamente.', 'error');
+      return null;
+    }
+  }, [analyzeDossier, applications, calculateAge, currentUser, showToast, supabase]);
+
+  const updateApplicationStatus = useCallback(async (appId: string, status: ApplicationStatus) => {
+    if (!supabase || currentUser?.role !== 'guardian') return false;
+    const { data, error } = await supabase
+      .from('applications')
+      .update({ status })
+      .eq('id', appId)
+      .eq('guardian_id', currentUser.id)
+      .select('id')
+      .maybeSingle();
+
+    if (error || !data) {
+      console.warn('Não foi possível atualizar o status:', error?.message);
+      showToast('Status não atualizado', 'Tente novamente em alguns instantes.', 'error');
+      return false;
     }
 
-    return newApp;
-  }, [analyzeDossier, currentUser, showToast, supabase]);
-
-  const updateApplicationStatus = useCallback((appId: string, status: ApplicationStatus) => {
-    setApplicationsState((prev) => {
-      const updated = prev.map((app) => {
-        if (app.id === appId) {
-          const statusLabels: Record<ApplicationStatus, string> = {
-            pending: 'Pendente',
-            under_review: 'Em Avaliação',
-            approved: 'Aprovada',
-            rejected: 'Não Aprovada',
-            completed: 'Adoção Concluída'
-          };
-          const systemMsg = {
-            id: `sys-${Date.now()}`,
-            senderName: 'Sistema ConnectPet',
-            senderRole: 'system' as const,
-            content: `Status da candidatura alterado para: ${statusLabels[status]}.`,
-            sentAt: new Date().toISOString()
-          };
-          return {
-            ...app,
-            status,
-            messages: [...app.messages, systemMsg]
-          };
-        }
-        return app;
-      });
-      try {
-        localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(updated));
-      } catch { }
-      return updated;
-    });
-
-    if (supabase && !appId.startsWith('app-')) {
-      (async () => {
-        try {
-          const { error } = await supabase
-            .from('applications')
-            .update({ status })
-            .eq('id', appId);
-          if (error) console.warn('Supabase app status update note:', error.message);
-          // A mensagem de sistema é gravada pelo trigger do banco (ver schema.sql, seção 10.5)
-        } catch (err) {
-          console.warn('Supabase app status update error:', err);
-        }
-      })();
-    }
-
+    setApplicationsState((anteriores) => anteriores.map((app) => app.id === appId ? { ...app, status } : app));
+    reloadApplications();
     showToast('Status atualizado', 'O andamento da candidatura foi atualizado com sucesso.', 'success');
-  }, [showToast, supabase]);
+    return true;
+  }, [currentUser, reloadApplications, showToast, supabase]);
 
-  const updateGuardianNotes = useCallback((appId: string, notes: string) => {
-    setApplicationsState((prev) => {
-      const updated = prev.map((app) => (app.id === appId ? { ...app, guardianNotes: notes } : app));
-      try {
-        localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(updated));
-      } catch { }
-      return updated;
-    });
+  const updateGuardianNotes = useCallback(async (appId: string, notes: string) => {
+    if (!supabase || currentUser?.role !== 'guardian') return false;
+    const { data, error } = await supabase
+      .from('applications')
+      .update({ guardian_notes: notes })
+      .eq('id', appId)
+      .eq('guardian_id', currentUser.id)
+      .select('id')
+      .maybeSingle();
 
-    if (supabase && !appId.startsWith('app-')) {
-      (async () => {
-        try {
-          const { error } = await supabase
-            .from('applications')
-            .update({ guardian_notes: notes })
-            .eq('id', appId);
-          if (error) console.warn('Supabase guardian notes note:', error.message);
-        } catch (err) {
-          console.warn('Supabase guardian notes error:', err);
-        }
-      })();
+    if (error || !data) {
+      console.warn('Não foi possível salvar a nota:', error?.message);
+      showToast('Nota não salva', 'Tente novamente em alguns instantes.', 'error');
+      return false;
     }
 
+    setApplicationsState((anteriores) => anteriores.map((app) => app.id === appId ? { ...app, guardianNotes: notes } : app));
     showToast('Nota salva', 'Anotações internas da ONG atualizadas.', 'info');
-  }, [showToast, supabase]);
+    return true;
+  }, [currentUser, showToast, supabase]);
 
-  const sendApplicationMessage = useCallback((appId: string, content: string) => {
-    if (!content.trim()) return;
+  const sendApplicationMessage = useCallback(async (appId: string, content: string) => {
+    const mensagem = content.trim();
+    if (!mensagem || !supabase || !currentUser) return false;
 
-    setApplicationsState((prev) => {
-      const updated = prev.map((app) => {
-        if (app.id === appId) {
-          const isAdopter = currentUser?.role === 'adopter';
-          const senderName = currentUser?.name || (isAdopter ? 'Candidato' : 'Protetor');
-          const senderRole = isAdopter ? ('adopter' as const) : ('guardian' as const);
+    const { data, error } = await supabase
+      .from('application_messages')
+      .insert({
+        application_id: appId,
+        sender_id: currentUser.id,
+        sender_name: currentUser.name,
+        sender_role: currentUser.role === 'guardian' ? 'guardian' : 'candidate',
+        message: mensagem
+      })
+      .select('id, created_at')
+      .single();
 
-          const newMessage = {
-            id: `msg-${Date.now()}`,
-            senderName,
-            senderRole,
-            content: content.trim(),
-            sentAt: new Date().toISOString()
-          };
-
-          return {
-            ...app,
-            messages: [...app.messages, newMessage]
-          };
-        }
-        return app;
-      });
-      try {
-        localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(updated));
-      } catch { }
-      return updated;
-    });
-
-    if (supabase && !appId.startsWith('app-')) {
-      (async () => {
-        try {
-          const { error } = await supabase
-            .from('application_messages')
-            .insert({
-              application_id: appId,
-              sender_id: currentUser?.id || 'anon',
-              sender_name: currentUser?.name || 'Usuário',
-              sender_role: currentUser?.role === 'guardian' ? 'guardian' : 'candidate',
-              message: content.trim()
-            });
-          if (error) console.warn('Supabase message insert note:', error.message);
-        } catch (err) {
-          console.warn('Supabase message error:', err);
-        }
-      })();
+    if (error || !data) {
+      console.warn('Não foi possível enviar a mensagem:', error?.message);
+      showToast('Mensagem não enviada', 'Tente novamente em alguns instantes.', 'error');
+      return false;
     }
 
+    const novaMensagem = {
+      id: String(data.id),
+      senderName: currentUser.name,
+      senderRole: currentUser.role === 'guardian' ? ('guardian' as const) : ('adopter' as const),
+      content: mensagem,
+      sentAt: String(data.created_at)
+    };
+    setApplicationsState((anteriores) => anteriores.map((app) =>
+      app.id === appId ? { ...app, messages: [...app.messages, novaMensagem] } : app
+    ));
     showToast('Mensagem enviada', undefined, 'success');
+    return true;
   }, [currentUser, showToast, supabase]);
 
   const contextValue = useMemo<AppContextType>(() => ({
     theme,
     setTheme,
     currentUser,
-    setCurrentUser,
+    authLoading,
     updateUserProfile,
     logout,
     requireAuth,
     authPrompt,
     closeAuthPrompt,
     pets,
+    petsLoading,
+    petsError,
+    reloadPets,
     addPet,
     updatePet,
     deletePet,
@@ -1540,6 +1482,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showFavoritesOnly,
     setShowFavoritesOnly,
     applications,
+    applicationsLoading,
+    applicationsError,
+    reloadApplications,
     submitApplication,
     updateApplicationStatus,
     updateGuardianNotes,
@@ -1555,13 +1500,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     theme,
     setTheme,
     currentUser,
-    setCurrentUser,
+    authLoading,
     updateUserProfile,
     logout,
     requireAuth,
     authPrompt,
     closeAuthPrompt,
     pets,
+    petsLoading,
+    petsError,
+    reloadPets,
     addPet,
     updatePet,
     deletePet,
@@ -1571,6 +1519,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showFavoritesOnly,
     setShowFavoritesOnly,
     applications,
+    applicationsLoading,
+    applicationsError,
+    reloadApplications,
     submitApplication,
     updateApplicationStatus,
     updateGuardianNotes,
