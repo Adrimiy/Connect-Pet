@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.5.0] - 2026-10-11
+### Commit
+`feat: modernizar painel de gestão de adoções`
+
+### Mudanças
+- Reorganiza o dashboard de ONGs e doadores com visão geral orientada a tarefas, navegação persistida na URL e indicadores reais acionáveis.
+- Consolida a gestão de animais em uma única experiência com busca, filtros, ordenação, cartões, tabela, completude do anúncio e contagem de candidaturas.
+- Aprimora a triagem com filtros, ordenação por atividade, dossiê em painel móvel, contatos rápidos e menor destaque decisório para a análise automática.
+- Adiciona confirmação e regras seguras para transições de candidatura, incluindo a sincronização correta do pet ao concluir ou reabrir uma adoção.
+- Filtra candidaturas recebidas pelo responsável autenticado e adiciona datas de atualização e índice composto alinhado à consulta do painel.
+- Atualiza os rótulos de navegação para atender igualmente ONGs e doadores individuais, preservando responsividade, acessibilidade e temas claro/escuro.
+
+---
+
 ## [v0.4.2] - 2026-10-11
 ### Commit
 `fix: sincronizar adoções concluídas com métricas e pets`

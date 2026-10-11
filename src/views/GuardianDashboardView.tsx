@@ -1,33 +1,344 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useApp } from "@/context/AppContext";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  ApplicationStatus,
-  PetAdoptionStatus
-} from "@/types";
+  AlertCircle,
+  AlertTriangle,
+  ArrowRight,
+  BarChart3,
+  Building2,
+  CheckCircle2,
+  ChevronRight,
+  CircleCheckBig,
+  Eye,
+  FileCheck2,
+  Grid2X2,
+  Inbox,
+  LayoutDashboard,
+  List,
+  Loader2,
+  MessageSquare,
+  PawPrint,
+  Pencil,
+  Plus,
+  Search,
+  Send,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import { useApp } from "@/context/AppContext";
+import type { ApplicationStatus, Pet, PetAdoptionStatus, PreAdoptionApplication } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  PawPrint,
-  FileCheck2,
-  BarChart3,
-  Plus,
-  Search,
-  Trash2,
-  CheckCircle2,
-  AlertTriangle,
-  Send,
-  MessageSquare,
-  ShieldCheck,
-  Sparkles,
-  Building2,
-  Loader2,
-  AlertCircle,
-  Pencil
-} from "lucide-react";
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+
+type AbaPainel = "visao-geral" | "candidaturas" | "animais" | "metricas";
+type OrdenacaoAnimais = "recentes" | "nome" | "completude";
+type OrdenacaoCandidaturas = "recentes" | "antigas" | "atividade";
+
+const ABAS: Array<{ id: AbaPainel; rotulo: string; icone: React.ComponentType<{ className?: string }> }> = [
+  { id: "visao-geral", rotulo: "Visão geral", icone: LayoutDashboard },
+  { id: "candidaturas", rotulo: "Candidaturas", icone: FileCheck2 },
+  { id: "animais", rotulo: "Animais", icone: PawPrint },
+  { id: "metricas", rotulo: "Indicadores", icone: BarChart3 },
+];
+
+const CONFIGURACAO_STATUS_CANDIDATURA: Record<ApplicationStatus, { rotulo: string; classe: string }> = {
+  pending: { rotulo: "Pendente", classe: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300" },
+  under_review: { rotulo: "Em avaliação", classe: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300" },
+  approved: { rotulo: "Aprovada", classe: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
+  rejected: { rotulo: "Não aprovada", classe: "border-destructive/30 bg-destructive/10 text-destructive" },
+  completed: { rotulo: "Adoção concluída", classe: "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300" },
+};
+
+const ROTULOS_STATUS_PET: Record<PetAdoptionStatus, string> = {
+  available: "Disponível",
+  in_process: "Em processo",
+  adopted: "Adotado",
+};
+
+function obterTransicoesPermitidas(status: ApplicationStatus): ApplicationStatus[] {
+  const transicoes: Record<ApplicationStatus, ApplicationStatus[]> = {
+    pending: ["under_review", "rejected"],
+    under_review: ["pending", "approved", "rejected"],
+    approved: ["under_review", "rejected", "completed"],
+    rejected: ["under_review"],
+    completed: ["under_review"],
+  };
+  return transicoes[status];
+}
+
+function obterCompletudePet(pet: Pet): number {
+  const campos = [
+    pet.photos.length > 0,
+    Boolean(pet.headline.trim()),
+    Boolean(pet.story.trim()),
+    pet.temperament.length > 0,
+    Boolean(pet.temperamentDescription.trim()),
+    Boolean(pet.breed.trim()),
+    Boolean(pet.approximateAge.trim()),
+    Boolean(pet.location.city && pet.location.state),
+    Boolean(pet.location.neighborhood),
+    Boolean(pet.guardianPhone && pet.guardianEmail),
+  ];
+  return Math.round((campos.filter(Boolean).length / campos.length) * 100);
+}
+
+function obterUltimaAtividade(candidatura: PreAdoptionApplication): number {
+  const ultimaMensagem = candidatura.messages.at(-1)?.sentAt;
+  return new Date(ultimaMensagem || candidatura.createdAt).getTime();
+}
+
+function CartaoIndicador({
+  titulo,
+  valor,
+  descricao,
+  aoClicar,
+  icone: Icone,
+}: {
+  titulo: string;
+  valor: string | number;
+  descricao: string;
+  aoClicar?: () => void;
+  icone: React.ComponentType<{ className?: string }>;
+}) {
+  const conteudo = (
+    <>
+      <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+        <Icone className="h-5 w-5" />
+      </span>
+      <span className="mt-4 block text-xs font-bold uppercase tracking-wider text-muted-foreground">{titulo}</span>
+      <strong className="mt-1 block font-serif text-3xl text-foreground sm:text-4xl">{valor}</strong>
+      <span className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+        {descricao}{aoClicar && <ChevronRight className="h-3.5 w-3.5" />}
+      </span>
+    </>
+  );
+
+  return aoClicar ? (
+    <button
+      type="button"
+      onClick={aoClicar}
+      className="min-h-[44px] rounded-3xl border border-border/70 bg-card p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      {conteudo}
+    </button>
+  ) : (
+    <div className="rounded-3xl border border-border/70 bg-card p-5 shadow-sm">{conteudo}</div>
+  );
+}
+
+function EstadoErro({ titulo, mensagem, aoTentarNovamente }: { titulo: string; mensagem: string; aoTentarNovamente: () => void }) {
+  return (
+    <div role="alert" className="space-y-4 rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center sm:p-10">
+      <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
+      <div>
+        <h2 className="font-bold text-foreground">{titulo}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{mensagem}</p>
+      </div>
+      <Button variant="outline" onClick={aoTentarNovamente} className="min-h-[44px] rounded-full">Tentar novamente</Button>
+    </div>
+  );
+}
+
+function PainelDossie({
+  candidatura,
+  contexto,
+  estaAtualizandoStatus,
+  aoSolicitarStatus,
+  aoSalvarNotas,
+  aoEnviarMensagem,
+}: {
+  candidatura: PreAdoptionApplication;
+  contexto: "desktop" | "movel";
+  estaAtualizandoStatus: boolean;
+  aoSolicitarStatus: (status: ApplicationStatus) => void;
+  aoSalvarNotas: (notas: string) => Promise<boolean>;
+  aoEnviarMensagem: (mensagem: string) => Promise<boolean>;
+}) {
+  const [notas, setNotas] = useState(candidatura.guardianNotes || "");
+  const [mensagem, setMensagem] = useState("");
+  const [estaSalvandoNotas, setEstaSalvandoNotas] = useState(false);
+  const [estaEnviandoMensagem, setEstaEnviandoMensagem] = useState(false);
+  const transicoes = obterTransicoesPermitidas(candidatura.status);
+  const telefone = candidatura.candidate.primaryPhone?.replace(/\D/g, "");
+
+  const salvarNotas = async () => {
+    setEstaSalvandoNotas(true);
+    await aoSalvarNotas(notas);
+    setEstaSalvandoNotas(false);
+  };
+
+  const enviarMensagem = async (evento: React.FormEvent) => {
+    evento.preventDefault();
+    if (!mensagem.trim() || estaEnviandoMensagem) return;
+    setEstaEnviandoMensagem(true);
+    if (await aoEnviarMensagem(mensagem)) setMensagem("");
+    setEstaEnviandoMensagem(false);
+  };
+
+  return (
+    <article className="space-y-5 rounded-3xl border border-border/70 bg-card p-4 shadow-sm sm:space-y-6 sm:p-7">
+      <header className="flex flex-col gap-4 border-b border-border/60 pb-5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-primary">Dossiê de pré-adoção</p>
+          <h2 className="mt-1 break-words font-serif text-xl font-bold text-foreground sm:text-2xl">
+            {candidatura.candidate.name} <span className="text-muted-foreground">·</span> {candidatura.petName}
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">Recebida em {new Date(candidatura.createdAt).toLocaleDateString("pt-BR")}</p>
+        </div>
+        <label className="flex w-full flex-col gap-1 text-xs font-semibold text-muted-foreground sm:w-auto">
+          Andamento
+          <select
+            value={candidatura.status}
+            disabled={estaAtualizandoStatus}
+            onChange={(evento) => aoSolicitarStatus(evento.target.value as ApplicationStatus)}
+            className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 text-xs font-bold text-foreground outline-none focus:ring-2 focus:ring-primary sm:w-auto"
+          >
+            <option value={candidatura.status}>{CONFIGURACAO_STATUS_CANDIDATURA[candidatura.status].rotulo}</option>
+            {transicoes.map((status) => <option key={status} value={status}>{CONFIGURACAO_STATUS_CANDIDATURA[status].rotulo}</option>)}
+          </select>
+        </label>
+      </header>
+
+      {candidatura.automatedAnalysis && (
+        <section className="space-y-3 rounded-2xl border border-border/70 bg-muted/35 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-foreground">
+              <Sparkles className="h-4 w-4 text-primary" /> Pontos para revisão humana
+            </h3>
+            <Badge variant="outline">Referência: {candidatura.automatedAnalysis.suitabilityScore}/100</Badge>
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Esta análise organiza respostas do formulário. Ela não aprova nem rejeita a candidatura e deve ser confirmada em entrevista.
+          </p>
+          <div className="grid grid-cols-1 gap-4 text-xs md:grid-cols-2">
+            <div>
+              <h4 className="mb-2 font-bold text-foreground">Pontos favoráveis</h4>
+              <ul className="space-y-1.5 text-muted-foreground">
+                {candidatura.automatedAnalysis.strengths.length > 0 ? candidatura.automatedAnalysis.strengths.map((item) => (
+                  <li key={item} className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />{item}</li>
+                )) : <li>Nenhum ponto automático registrado.</li>}
+              </ul>
+            </div>
+            <div>
+              <h4 className="mb-2 font-bold text-foreground">Confirmar na conversa</h4>
+              <ul className="space-y-1.5 text-muted-foreground">
+                {candidatura.automatedAnalysis.attentionPoints.length > 0 ? candidatura.automatedAnalysis.attentionPoints.map((item) => (
+                  <li key={item} className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />{item}</li>
+                )) : <li>Nenhum ponto de atenção automático.</li>}
+              </ul>
+            </div>
+          </div>
+          {candidatura.automatedAnalysis.suggestedQuestions.length > 0 && (
+            <div className="border-t border-border/60 pt-3 text-xs">
+              <h4 className="mb-1 font-bold text-foreground">Perguntas sugeridas</h4>
+              <ul className="list-inside list-disc space-y-1 text-muted-foreground">
+                {candidatura.automatedAnalysis.suggestedQuestions.map((pergunta) => <li key={pergunta}>{pergunta}</li>)}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 text-xs md:grid-cols-2">
+        <section className="space-y-2 rounded-2xl border border-border/60 bg-muted/25 p-4">
+          <h3 className="font-bold uppercase tracking-wider text-foreground">Candidato</h3>
+          <p><strong>Nome:</strong> {candidatura.candidate.name}</p>
+          <p><strong>Nascimento:</strong> {candidatura.candidate.birthDate || "Não informado"}</p>
+          <p><strong>Profissão:</strong> {candidatura.candidate.profession || "Não informada"}</p>
+          <p className="break-all"><strong>E-mail:</strong> <a className="text-primary hover:underline" href={`mailto:${candidatura.candidate.email}`}>{candidatura.candidate.email}</a></p>
+          <p><strong>WhatsApp:</strong> {telefone ? <a className="text-primary hover:underline" href={`https://wa.me/55${telefone}`} target="_blank" rel="noreferrer">{candidatura.candidate.primaryPhone}</a> : "Não informado"}</p>
+          <p><strong>Redes sociais:</strong> {candidatura.candidate.socialMedia || "Não informadas"}</p>
+        </section>
+        <section className="space-y-2 rounded-2xl border border-border/60 bg-muted/25 p-4">
+          <h3 className="font-bold uppercase tracking-wider text-foreground">Moradia e rotina</h3>
+          <p><strong>Imóvel:</strong> {candidatura.housingType} ({candidatura.housingStatus})</p>
+          <p><strong>Proteção física:</strong> {candidatura.hasProtection ? "Informada" : "Não informada"}</p>
+          {candidatura.protectionDetails && <p className="text-muted-foreground">{candidatura.protectionDetails}</p>}
+          <p><strong>Família:</strong> {candidatura.adultsCount} adulto(s) e {candidatura.childrenCount} criança(s)</p>
+          <p><strong>Tempo sozinho:</strong> {candidatura.hoursAlone} hora(s) por dia</p>
+          <p><strong>Plano para viagens:</strong> {candidatura.travelCarePlan || "Não informado"}</p>
+        </section>
+      </div>
+
+      <section className="space-y-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <label htmlFor={`notas-${contexto}-${candidatura.id}`} className="text-xs font-bold uppercase tracking-wider text-foreground">Anotações internas</label>
+          <Button variant="ghost" size="sm" disabled={estaSalvandoNotas} onClick={() => void salvarNotas()} className="min-h-[44px] self-start text-xs text-primary sm:self-auto">
+            {estaSalvandoNotas && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{estaSalvandoNotas ? "Salvando" : "Salvar anotações"}
+          </Button>
+        </div>
+        <textarea
+          id={`notas-${contexto}-${candidatura.id}`}
+          rows={3}
+          value={notas}
+          onChange={(evento) => setNotas(evento.target.value)}
+          placeholder="Registre impressões da entrevista, combinados ou informações para a equipe."
+          className="w-full rounded-xl border border-border bg-background px-3.5 py-3 text-xs text-foreground outline-none focus:ring-2 focus:ring-primary"
+        />
+        <p className="text-[11px] text-muted-foreground">Visível apenas para o responsável pelo animal.</p>
+      </section>
+
+      <section className="space-y-3 border-t border-border/60 pt-5">
+        <h3 className="flex items-center gap-2 text-sm font-bold text-foreground"><MessageSquare className="h-4 w-4 text-primary" /> Conversa com o candidato</h3>
+        <div className="max-h-72 min-h-52 overflow-y-auto rounded-2xl border border-border/60 bg-muted/20 p-3 sm:p-4">
+          {candidatura.messages.length === 0 ? (
+            <div className="flex min-h-44 flex-col items-center justify-center text-center">
+              <Inbox className="mb-2 h-7 w-7 text-muted-foreground" />
+              <p className="text-xs text-muted-foreground">Nenhuma mensagem ainda. Use o campo abaixo para iniciar o contato.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {candidatura.messages.map((item) => {
+                if (item.senderRole === "system") {
+                  return <p key={item.id} className="text-center text-[10px] text-muted-foreground"><span className="inline-block rounded-full bg-muted px-3 py-1">{item.content}</span></p>;
+                }
+                const mensagemGuardiao = item.senderRole === "guardian";
+                return (
+                  <div key={item.id} className={`flex flex-col ${mensagemGuardiao ? "items-end" : "items-start"}`}>
+                    <span className="mb-1 px-1 text-[10px] text-muted-foreground">{item.senderName} · {new Date(item.sentAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+                    <p className={`max-w-[90%] rounded-2xl p-3 text-xs leading-relaxed sm:max-w-md ${mensagemGuardiao ? "rounded-br-sm bg-primary text-primary-foreground" : "rounded-bl-sm border border-border bg-card text-foreground"}`}>{item.content}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <form onSubmit={enviarMensagem} className="flex flex-col gap-2 sm:flex-row">
+          <label htmlFor={`mensagem-${contexto}-${candidatura.id}`} className="sr-only">Mensagem para o candidato</label>
+          <input
+            id={`mensagem-${contexto}-${candidatura.id}`}
+            value={mensagem}
+            onChange={(evento) => setMensagem(evento.target.value)}
+            placeholder="Escreva uma mensagem..."
+            className="min-h-[44px] flex-1 rounded-full border border-border bg-background px-4 text-xs text-foreground outline-none focus:ring-2 focus:ring-primary"
+          />
+          <Button type="submit" disabled={!mensagem.trim() || estaEnviandoMensagem} className="min-h-[44px] rounded-full sm:px-5">
+            {estaEnviandoMensagem ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}Enviar
+          </Button>
+        </form>
+      </section>
+    </article>
+  );
+}
 
 export function GuardianDashboardView() {
   const {
@@ -45,727 +356,337 @@ export function GuardianDashboardView() {
     reloadApplications,
     updateApplicationStatus,
     updateGuardianNotes,
-    sendApplicationMessage
+    sendApplicationMessage,
   } = useApp();
+  const router = useRouter();
+  const pathname = usePathname();
+  const parametrosBusca = useSearchParams();
 
-  const isGuardian = currentUser?.role === "guardian";
+  const abaParametro = parametrosBusca.get("aba");
+  const abaAtiva: AbaPainel = ABAS.some((aba) => aba.id === abaParametro) ? abaParametro as AbaPainel : "visao-geral";
+  const candidaturaParametro = parametrosBusca.get("candidatura");
 
-  const guardianPets = useMemo(() => {
-    if (!currentUser) return [];
-    return pets.filter((pet) => pet.guardianId === currentUser.id);
-  }, [pets, currentUser]);
-
-  const guardianPetIds = useMemo(() => new Set(guardianPets.map((p) => p.id)), [guardianPets]);
-
-  const guardianApplications = useMemo(() => {
-    if (!currentUser) return [];
-    return applications.filter(
-      (a) => a.guardianId === currentUser.id || guardianPetIds.has(a.petId)
-    );
-  }, [applications, currentUser, guardianPetIds]);
-
-  const [activeTab, setActiveTab] = useState<"animals" | "applications" | "metrics">("animals");
-  const [searchAnimal, setSearchAnimal] = useState("");
-  const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
+  const [buscaAnimal, setBuscaAnimal] = useState("");
+  const [statusAnimal, setStatusAnimal] = useState<PetAdoptionStatus | "todos">("todos");
+  const [especieAnimal, setEspecieAnimal] = useState<Pet["species"] | "todos">("todos");
+  const [ordenacaoAnimais, setOrdenacaoAnimais] = useState<OrdenacaoAnimais>("recentes");
+  const [modoAnimais, setModoAnimais] = useState<"cartoes" | "lista">("cartoes");
+  const [buscaCandidatura, setBuscaCandidatura] = useState("");
+  const [statusCandidatura, setStatusCandidatura] = useState<ApplicationStatus | "todos">("todos");
+  const [petCandidatura, setPetCandidatura] = useState("todos");
+  const [ordenacaoCandidaturas, setOrdenacaoCandidaturas] = useState<OrdenacaoCandidaturas>("recentes");
+  const [detalheMovelAberto, setDetalheMovelAberto] = useState(false);
   const [petIdParaExcluir, setPetIdParaExcluir] = useState<string | null>(null);
   const [estaExcluindoPet, setEstaExcluindoPet] = useState(false);
+  const [alteracaoStatus, setAlteracaoStatus] = useState<{ candidatura: PreAdoptionApplication; status: ApplicationStatus } | null>(null);
+  const [estaAtualizandoStatus, setEstaAtualizandoStatus] = useState(false);
 
-  const selectedApplication = useMemo(() => {
-    if (guardianApplications.length === 0) return null;
-    if (selectedApplicationId) {
-      const found = guardianApplications.find((a) => a.id === selectedApplicationId);
-      if (found) return found;
-    }
-    return guardianApplications[0] || null;
-  }, [guardianApplications, selectedApplicationId]);
+  const animaisGuardiao = useMemo(() => {
+    if (!currentUser) return [];
+    return pets.filter((pet) => pet.guardianId === currentUser.id);
+  }, [currentUser, pets]);
+  const idsAnimais = useMemo(() => new Set(animaisGuardiao.map((pet) => pet.id)), [animaisGuardiao]);
+  const candidaturasGuardiao = useMemo(() => {
+    if (!currentUser) return [];
+    return applications.filter((item) => item.guardianId === currentUser.id || idsAnimais.has(item.petId));
+  }, [applications, currentUser, idsAnimais]);
+  const contagemCandidaturasPorPet = useMemo(() => {
+    const contagem = new Map<string, number>();
+    candidaturasGuardiao.forEach((item) => contagem.set(item.petId, (contagem.get(item.petId) || 0) + 1));
+    return contagem;
+  }, [candidaturasGuardiao]);
 
-  const [chatMessage, setChatMessage] = useState("");
-  const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
-  const activeNote = selectedApplication
-    ? (editingNotes[selectedApplication.id] ?? selectedApplication.guardianNotes ?? "")
-    : "";
-  const petParaExcluir = guardianPets.find((pet) => pet.id === petIdParaExcluir) || null;
-
-  // Filtered animals
-  const filteredPets = guardianPets.filter((p) =>
-    p.name.toLowerCase().includes(searchAnimal.toLowerCase()) ||
-    p.breed.toLowerCase().includes(searchAnimal.toLowerCase())
-  );
-
-  // Status badges config
-  const statusConfig: Record<ApplicationStatus, { label: string; className: string }> = {
-    pending: { label: "Pendente", className: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30" },
-    under_review: { label: "Em Avaliação", className: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30" },
-    approved: { label: "Aprovada", className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" },
-    rejected: { label: "Não Aprovada", className: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30" },
-    completed: { label: "Adoção Concluída", className: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30" }
+  const navegarParaAba = (aba: AbaPainel, candidaturaId?: string) => {
+    const parametros = new URLSearchParams(parametrosBusca.toString());
+    parametros.set("aba", aba);
+    if (candidaturaId) parametros.set("candidatura", candidaturaId);
+    else parametros.delete("candidatura");
+    router.replace(`${pathname}?${parametros.toString()}`, { scroll: false });
   };
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedApplication || !chatMessage.trim()) return;
-    if (await sendApplicationMessage(selectedApplication.id, chatMessage)) setChatMessage("");
+  const candidaturasFiltradas = useMemo(() => {
+    const termo = buscaCandidatura.trim().toLocaleLowerCase("pt-BR");
+    return candidaturasGuardiao
+      .filter((item) => statusCandidatura === "todos" || item.status === statusCandidatura)
+      .filter((item) => petCandidatura === "todos" || item.petId === petCandidatura)
+      .filter((item) => !termo || item.candidate.name.toLocaleLowerCase("pt-BR").includes(termo) || item.petName.toLocaleLowerCase("pt-BR").includes(termo))
+      .sort((a, b) => {
+        if (ordenacaoCandidaturas === "antigas") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        if (ordenacaoCandidaturas === "atividade") return obterUltimaAtividade(b) - obterUltimaAtividade(a);
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  }, [buscaCandidatura, candidaturasGuardiao, ordenacaoCandidaturas, petCandidatura, statusCandidatura]);
+
+  const candidaturaSelecionada = candidaturasFiltradas.find((item) => item.id === candidaturaParametro) || candidaturasFiltradas[0] || null;
+
+  const animaisFiltrados = useMemo(() => {
+    const termo = buscaAnimal.trim().toLocaleLowerCase("pt-BR");
+    return animaisGuardiao
+      .filter((pet) => statusAnimal === "todos" || pet.status === statusAnimal)
+      .filter((pet) => especieAnimal === "todos" || pet.species === especieAnimal)
+      .filter((pet) => !termo || pet.name.toLocaleLowerCase("pt-BR").includes(termo) || pet.breed.toLocaleLowerCase("pt-BR").includes(termo))
+      .sort((a, b) => {
+        if (ordenacaoAnimais === "nome") return a.name.localeCompare(b.name, "pt-BR");
+        if (ordenacaoAnimais === "completude") return obterCompletudePet(a) - obterCompletudePet(b);
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  }, [animaisGuardiao, buscaAnimal, especieAnimal, ordenacaoAnimais, statusAnimal]);
+
+  if (authLoading) {
+    return <div className="flex min-h-[70vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando painel" /></div>;
+  }
+
+  if (!currentUser || currentUser.role !== "guardian") {
+    return (
+      <div className="mx-auto flex min-h-[70vh] w-full max-w-md items-center px-4 py-16">
+        <div className="w-full space-y-4 rounded-3xl border border-border bg-card p-6 text-center shadow-xl sm:p-8">
+          <Building2 className="mx-auto h-12 w-12 text-primary" />
+          <h1 className="font-serif text-2xl font-bold text-foreground">Acesso ao painel de gestão</h1>
+          <p className="text-sm text-muted-foreground">Entre com uma conta de ONG ou doador para gerenciar animais e candidaturas.</p>
+          <Button asChild className="min-h-[44px] w-full rounded-full"><Link href="/login?redirect=/dashboard">Entrar</Link></Button>
+        </div>
+      </div>
+    );
+  }
+
+  const candidaturasAbertas = candidaturasGuardiao.filter((item) => ["pending", "under_review", "approved"].includes(item.status));
+  const pendentes = candidaturasGuardiao.filter((item) => item.status === "pending").length;
+  const adotados = animaisGuardiao.filter((pet) => pet.status === "adopted").length;
+  const disponiveis = animaisGuardiao.filter((pet) => pet.status === "available").length;
+  const emProcesso = animaisGuardiao.filter((pet) => pet.status === "in_process").length;
+  const adocoesConcluidas = new Set([
+    ...animaisGuardiao.filter((pet) => pet.status === "adopted").map((pet) => `pet:${pet.id}`),
+    ...candidaturasGuardiao.filter((item) => item.status === "completed").map((item) => item.petId ? `pet:${item.petId}` : `candidatura:${item.id}`),
+  ]).size;
+  const taxaAdocao = animaisGuardiao.length > 0 ? Math.round((adotados / animaisGuardiao.length) * 100) : null;
+  const cuidadosCompletos = animaisGuardiao.filter((pet) => pet.vaccinated && pet.castrated && pet.dewormed).length;
+  const animaisQuePrecisamAtencao = animaisGuardiao.filter((pet) => obterCompletudePet(pet) < 80).sort((a, b) => obterCompletudePet(a) - obterCompletudePet(b));
+  const petParaExcluir = animaisGuardiao.find((pet) => pet.id === petIdParaExcluir) || null;
+
+  const selecionarCandidatura = (candidaturaId: string) => {
+    navegarParaAba("candidaturas", candidaturaId);
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches) setDetalheMovelAberto(true);
   };
 
-  const handleSaveNotes = async () => {
-    if (!selectedApplication) return;
-    await updateGuardianNotes(selectedApplication.id, activeNote);
+  const confirmarAlteracaoStatus = async () => {
+    if (!alteracaoStatus || estaAtualizandoStatus) return;
+    setEstaAtualizandoStatus(true);
+    const atualizou = await updateApplicationStatus(alteracaoStatus.candidatura.id, alteracaoStatus.status);
+    setEstaAtualizandoStatus(false);
+    if (atualizou) setAlteracaoStatus(null);
   };
 
-  const handleDeletePet = async () => {
+  const removerPet = async () => {
     if (!petIdParaExcluir || estaExcluindoPet) return;
     setEstaExcluindoPet(true);
     if (await deletePet(petIdParaExcluir)) setPetIdParaExcluir(null);
     setEstaExcluindoPet(false);
   };
 
-  if (authLoading) {
-    return <div className="flex min-h-[70vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando painel" /></div>;
-  }
-
-  if (!currentUser || !isGuardian) {
-    return (
-      <div className="container mx-auto px-4 py-20 min-h-[70vh] flex items-center justify-center">
-        <div className="p-10 rounded-3xl bg-card border border-border text-center space-y-4 max-w-md shadow-xl">
-          <Building2 className="w-12 h-12 text-primary mx-auto" />
-          <div className="space-y-1">
-            <h2 className="font-serif text-2xl font-bold text-foreground">Acesso ao Painel da ONG</h2>
-            <p className="text-xs text-muted-foreground">
-              Você precisa estar conectado com uma conta de ONG ou doador para gerenciar animais e candidaturas.
-            </p>
-          </div>
-          <div className="pt-2">
-            <Button asChild variant="outline" className="rounded-full w-full">
-              <Link href="/login?redirect=/dashboard">Fazer Login com E-mail e Senha</Link>
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Métricas calculadas a partir dos pets e das candidaturas persistidas.
-  const totalPets = guardianPets.length;
-  const idsPetsComAdocaoConcluida = new Set(
-    guardianApplications
-      .filter((candidatura) => candidatura.status === "completed" && candidatura.petId)
-      .map((candidatura) => candidatura.petId)
+  const renderizarDossie = (candidatura: PreAdoptionApplication, contexto: "desktop" | "movel") => (
+    <PainelDossie
+      key={`${contexto}-${candidatura.id}`}
+      candidatura={candidatura}
+      contexto={contexto}
+      estaAtualizandoStatus={estaAtualizandoStatus}
+      aoSolicitarStatus={(status) => setAlteracaoStatus({ candidatura, status })}
+      aoSalvarNotas={(notas) => updateGuardianNotes(candidatura.id, notas)}
+      aoEnviarMensagem={(mensagem) => sendApplicationMessage(candidatura.id, mensagem)}
+    />
   );
-  const chavesAdocoesConcluidas = new Set<string>();
-  guardianPets
-    .filter((pet) => pet.status === "adopted")
-    .forEach((pet) => chavesAdocoesConcluidas.add(`pet:${pet.id}`));
-  guardianApplications
-    .filter((candidatura) => candidatura.status === "completed")
-    .forEach((candidatura) => chavesAdocoesConcluidas.add(
-      candidatura.petId ? `pet:${candidatura.petId}` : `candidatura:${candidatura.id}`
-    ));
-  const adocoesConcluidas = chavesAdocoesConcluidas.size;
-  const triagensEmAberto = guardianApplications.filter((candidatura) =>
-    candidatura.status === "pending"
-    || candidatura.status === "under_review"
-    || candidatura.status === "approved"
-  ).length;
-  const now = new Date();
-  const petsThisMonth = guardianPets.filter((pet) => {
-    const createdAt = new Date(pet.createdAt);
-    return !Number.isNaN(createdAt.getTime())
-      && createdAt.getMonth() === now.getMonth()
-      && createdAt.getFullYear() === now.getFullYear();
-  }).length;
-  const petsAdotados = guardianPets.filter((pet) =>
-    pet.status === "adopted" || idsPetsComAdocaoConcluida.has(pet.id)
-  ).length;
-  const adoptionRate = totalPets > 0 ? Math.round((petsAdotados / totalPets) * 100) : null;
-  const petsWithRegisteredCare = guardianPets.filter((pet) => pet.vaccinated && pet.castrated).length;
 
   return (
-    <div className="container mx-auto px-4 sm:px-8 py-6 sm:py-10 md:py-16 min-h-screen space-y-6 sm:space-y-8">
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border/60">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-primary uppercase tracking-wider">
-              Painel de Gestão e Triagem
-            </span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary">
-              {isGuardian ? "ONG / Protetor" : "Usuário"}
-            </span>
+    <div className="mx-auto min-h-screen w-full max-w-7xl space-y-6 overflow-x-hidden px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
+      <header className="flex flex-col gap-4 border-b border-border/60 pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-primary">Painel de gestão</span>
+            <Badge variant="secondary">{currentUser.guardianType === "ngo" ? "ONG" : "Doador individual"}</Badge>
           </div>
-          <h1 className="font-serif text-2xl sm:text-3xl md:text-4xl font-bold text-foreground mt-1">
-            {currentUser?.name || "Painel da Instituição"}
-          </h1>
-          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-            Gerencie seus animais resgatados, avalie dossiês de candidatos e converse via chat integrado.
-          </p>
+          <h1 className="mt-1 break-words font-serif text-2xl font-bold text-foreground sm:text-3xl lg:text-4xl">{currentUser.name}</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Acompanhe prioridades, mantenha os anúncios atualizados e conduza cada adoção com clareza.</p>
         </div>
+        <Button asChild className="min-h-[44px] w-full rounded-full font-bold shadow-sm sm:w-auto">
+          <Link href="/dashboard/pets/novo"><Plus className="mr-2 h-4 w-4" />Cadastrar novo pet</Link>
+        </Button>
+      </header>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Button asChild className="rounded-full text-xs font-bold bg-primary hover:bg-primary/90 shadow-md min-h-[44px] w-full sm:w-auto">
-            <Link href="/dashboard/pets/novo">
-              <Plus className="w-4 h-4 mr-1.5" /> Cadastrar Novo Pet
-            </Link>
-          </Button>
-        </div>
-      </div>
+      <nav aria-label="Seções do painel" role="tablist" className="flex gap-2 overflow-x-auto rounded-2xl border border-border/60 bg-card p-1.5 shadow-sm">
+        {ABAS.map((aba) => {
+          const Icone = aba.icone;
+          const selecionada = abaAtiva === aba.id;
+          const contagem = aba.id === "candidaturas" ? candidaturasAbertas.length : aba.id === "animais" ? animaisGuardiao.length : null;
+          return (
+            <button
+              key={aba.id}
+              type="button"
+              role="tab"
+              aria-selected={selecionada}
+              onClick={() => navegarParaAba(aba.id)}
+              className={`flex min-h-[44px] shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:px-4 sm:text-sm ${selecionada ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            >
+              <Icone className="h-4 w-4" />{aba.rotulo}{contagem !== null && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${selecionada ? "bg-primary-foreground/20" : "bg-muted"}`}>{contagem}</span>}
+            </button>
+          );
+        })}
+      </nav>
 
-      {/* Navigation Tabs */}
-      <div className="flex border-b border-border/60 gap-4 overflow-x-auto whitespace-nowrap no-scrollbar pb-1">
-        <button
-          onClick={() => setActiveTab("applications")}
-          className={`pb-3 min-h-[44px] shrink-0 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${activeTab === "applications"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-        >
-          <FileCheck2 className="w-4 h-4" /> Triagem de Candidaturas ({guardianApplications.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab("animals")}
-          className={`pb-3 min-h-[44px] shrink-0 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${activeTab === "animals"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-        >
-          <PawPrint className="w-4 h-4" /> Gestão de Animais ({guardianPets.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab("metrics")}
-          className={`pb-3 min-h-[44px] shrink-0 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 transition-all ${activeTab === "metrics"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-        >
-          <BarChart3 className="w-4 h-4" /> Métricas e Indicadores
-        </button>
-      </div>
-
-      {/* TAB 1: TRIAGEM DE CANDIDATURAS */}
-      {activeTab === "applications" && applicationsLoading && (
-        <div className="flex min-h-[40vh] items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando candidaturas" />
-        </div>
-      )}
-
-      {activeTab === "applications" && !applicationsLoading && applicationsError && (
-        <div role="alert" className="space-y-4 rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center sm:p-10">
-          <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
-          <div>
-            <h3 className="font-bold text-foreground">Candidaturas indisponíveis</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{applicationsError}</p>
-          </div>
-          <Button variant="outline" onClick={reloadApplications} className="rounded-full">Tentar novamente</Button>
-        </div>
-      )}
-
-      {activeTab === "applications" && !applicationsLoading && !applicationsError && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-
-          {/* Applications List (4 Cols) */}
-          <div className="lg:col-span-4 space-y-3">
-            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-              Formulários Recebidos ({guardianApplications.length})
-            </h3>
-
-            <div className="space-y-3">
-              {guardianApplications.length === 0 ? (
-                <div className="p-8 rounded-3xl border border-dashed border-border/80 bg-card/60 text-center space-y-3">
-                  <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto">
-                    <FileCheck2 className="w-6 h-6" />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm font-bold text-foreground">Nenhuma candidatura recebida</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      Quando interessados preencherem formulários para adotar seus animais, as candidaturas aparecerão aqui para triagem.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                guardianApplications.map((app) => {
-                  const isSelected = selectedApplication?.id === app.id;
-                  const statusInfo = statusConfig[app.status];
-
-                  return (
-                    <button
-                      key={app.id}
-                      onClick={() => setSelectedApplicationId(app.id)}
-                      className={`w-full p-4 rounded-2xl border text-left transition-all ${isSelected
-                          ? "border-primary bg-primary/5 shadow-md"
-                          : "border-border/60 bg-card hover:border-border hover:bg-secondary/40"
-                        }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <span className="font-bold text-sm text-foreground block">
-                            {app.candidate.name}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Pretende adotar: <strong>{app.petName}</strong>
-                          </span>
-                        </div>
-                        <Badge variant="outline" className={`text-[10px] ${statusInfo.className}`}>
-                          {statusInfo.label}
-                        </Badge>
-                      </div>
-
-                      <div className="mt-3 pt-2 border-t border-border/40 flex items-center justify-between text-[11px] text-muted-foreground">
-                        <span>{new Date(app.createdAt).toLocaleDateString("pt-BR")}</span>
-                        {app.automatedAnalysis && (
-                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                            {app.automatedAnalysis.suitabilityScore}% Aptidão
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })
-              )}
+      <main role="tabpanel" aria-label={ABAS.find((aba) => aba.id === abaAtiva)?.rotulo}>
+        {abaAtiva === "visao-geral" && (
+          petsLoading || applicationsLoading ? (
+            <div className="flex min-h-[40vh] items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando visão geral" />
             </div>
-          </div>
+          ) : petsError || applicationsError ? (
+            <EstadoErro
+              titulo="Não foi possível montar a visão geral"
+              mensagem={petsError || applicationsError || "Tente novamente em alguns instantes."}
+              aoTentarNovamente={() => {
+                void reloadPets();
+                reloadApplications();
+              }}
+            />
+          ) : (
+          <div className="space-y-6">
+            <section aria-labelledby="titulo-resumo" className="space-y-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-primary">Hoje no ConnectPet</p>
+                <h2 id="titulo-resumo" className="font-serif text-2xl font-bold text-foreground">O que precisa da sua atenção</h2>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <CartaoIndicador titulo="Novas candidaturas" valor={pendentes} descricao={pendentes ? "Revisar formulários pendentes" : "Nenhuma nova pendência"} icone={Inbox} aoClicar={() => { setStatusCandidatura("pending"); navegarParaAba("candidaturas"); }} />
+                <CartaoIndicador titulo="Triagens abertas" valor={candidaturasAbertas.length} descricao="Acompanhar processos em andamento" icone={FileCheck2} aoClicar={() => { setStatusCandidatura("todos"); navegarParaAba("candidaturas"); }} />
+                <CartaoIndicador titulo="Pets disponíveis" valor={disponiveis} descricao="Revisar anúncios publicados" icone={PawPrint} aoClicar={() => { setStatusAnimal("available"); navegarParaAba("animais"); }} />
+                <CartaoIndicador titulo="Adoções concluídas" valor={adocoesConcluidas} descricao="Ver indicadores do trabalho" icone={CircleCheckBig} aoClicar={() => navegarParaAba("metricas")} />
+              </div>
+            </section>
 
-          {/* Dossier & Chat Viewer (8 Cols) */}
-          <div className="lg:col-span-8 space-y-6">
-            {selectedApplication ? (
-              <div className="p-4 sm:p-8 rounded-3xl bg-card border border-border/60 shadow-sm space-y-5 sm:space-y-6">
-
-                {/* Application Header with Status Changer */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 pb-5 sm:pb-6 border-b border-border/60">
-                  <div>
-                    <span className="text-[10px] font-bold text-primary uppercase tracking-wider">
-                      Dossiê de Pré-Adoção #{selectedApplication.id}
-                    </span>
-                    <h2 className="font-serif text-xl sm:text-2xl font-bold text-foreground mt-0.5">
-                      {selectedApplication.candidate.name} &bull; {selectedApplication.petName}
-                    </h2>
-                  </div>
-
-                  {/* Status Dropdown */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground font-semibold">Status:</span>
-                    <select
-                      value={selectedApplication.status}
-                      onChange={(e) => {
-                        const newStatus = e.target.value as ApplicationStatus;
-                        updateApplicationStatus(selectedApplication.id, newStatus);
-                      }}
-                      className="px-3 py-1.5 min-h-[44px] rounded-xl border border-border bg-background text-xs font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
-                    >
-                      <option value="pending">Pendente</option>
-                      <option value="under_review">Em Avaliação</option>
-                      <option value="approved">Aprovada</option>
-                      <option value="rejected">Não Aprovada</option>
-                      <option value="completed">Adoção Concluída</option>
-                    </select>
-                  </div>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <section className="rounded-3xl border border-border/70 bg-card p-4 shadow-sm sm:p-6">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div><p className="text-xs font-bold uppercase tracking-wider text-primary">Fila de trabalho</p><h2 className="font-serif text-xl font-bold text-foreground">Candidaturas recentes</h2></div>
+                  <Button variant="ghost" size="sm" className="min-h-[44px]" onClick={() => navegarParaAba("candidaturas")}>Ver todas<ArrowRight className="ml-1 h-4 w-4" /></Button>
                 </div>
-
-                {/* Automated Analysis Box */}
-                {selectedApplication.automatedAnalysis && (
-                  <div className="p-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                        <h4 className="font-bold text-sm text-foreground">
-                          Análise Automática do Dossiê ({selectedApplication.automatedAnalysis.verdict})
-                        </h4>
-                      </div>
-                      <span className="font-bold text-sm text-emerald-700 dark:text-emerald-300">
-                        {selectedApplication.automatedAnalysis.suitabilityScore}/100 Pontos
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-1">
-                      <div>
-                        <span className="font-bold text-emerald-800 dark:text-emerald-300 block mb-1">
-                          Pontos Fortes Identificados:
-                        </span>
-                        <ul className="space-y-1 text-muted-foreground">
-                          {selectedApplication.automatedAnalysis.strengths.map((s, idx) => (
-                            <li key={idx} className="flex items-start gap-1.5">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                              <span>{s}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <div>
-                        <span className="font-bold text-amber-800 dark:text-amber-300 block mb-1">
-                          Pontos de Atenção para a Entrevista:
-                        </span>
-                        <ul className="space-y-1 text-muted-foreground">
-                          {selectedApplication.automatedAnalysis.attentionPoints.map((a, idx) => (
-                            <li key={idx} className="flex items-start gap-1.5">
-                              <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                              <span>{a}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-
-                    {selectedApplication.automatedAnalysis.suggestedQuestions.length > 0 && (
-                      <div className="pt-2 border-t border-emerald-500/20 text-xs">
-                        <span className="font-bold text-foreground block mb-1">
-                          Perguntas Sugeridas para Fazer ao Adotante:
-                        </span>
-                        <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
-                          {selectedApplication.automatedAnalysis.suggestedQuestions.map((q, idx) => (
-                            <li key={idx}>{q}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                {candidaturasGuardiao.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border p-7 text-center text-sm text-muted-foreground">As candidaturas aparecerão aqui quando forem enviadas.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {[...candidaturasGuardiao].sort((a, b) => obterUltimaAtividade(b) - obterUltimaAtividade(a)).slice(0, 5).map((item) => (
+                      <button key={item.id} type="button" onClick={() => selecionarCandidatura(item.id)} className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl border border-transparent p-3 text-left transition hover:border-border hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                        <div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-foreground">{item.candidate.name}</p><p className="truncate text-xs text-muted-foreground">{item.petName} · {new Date(item.createdAt).toLocaleDateString("pt-BR")}</p></div>
+                        <Badge variant="outline" className={CONFIGURACAO_STATUS_CANDIDATURA[item.status].classe}>{CONFIGURACAO_STATUS_CANDIDATURA[item.status].rotulo}</Badge>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      </button>
+                    ))}
                   </div>
                 )}
+              </section>
 
-                {/* Candidate Core Details Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-
-                  {/* Personal */}
-                  <div className="p-4 rounded-2xl bg-secondary/30 space-y-2 border border-border/50">
-                    <span className="font-bold text-foreground uppercase tracking-wider block">
-                      Dados Pessoais
-                    </span>
-                    <p><strong>Nome:</strong> {selectedApplication.candidate.name}</p>
-                    <p><strong>Nascimento:</strong> {selectedApplication.candidate.birthDate}</p>
-                    <p><strong>Profissão:</strong> {selectedApplication.candidate.profession}</p>
-                    <p><strong>WhatsApp:</strong> {selectedApplication.candidate.primaryPhone}</p>
-                    <p><strong>E-mail:</strong> {selectedApplication.candidate.email}</p>
-                    <p><strong>Redes Sociais:</strong> {selectedApplication.candidate.socialMedia}</p>
-                  </div>
-
-                  {/* Housing & Family */}
-                  <div className="p-4 rounded-2xl bg-secondary/30 space-y-2 border border-border/50">
-                    <span className="font-bold text-foreground uppercase tracking-wider block">
-                      Habitação e Família
-                    </span>
-                    <p><strong>Imóvel:</strong> {selectedApplication.housingType} ({selectedApplication.housingStatus})</p>
-                    <p>
-                      <strong>Proteção Física:</strong>{" "}
-                      {selectedApplication.hasProtection ? (
-                        <span className="text-emerald-600 font-bold">Sim (Telas/Muros Altos)</span>
-                      ) : (
-                        <span className="text-rose-600 font-bold">Não possui telas</span>
-                      )}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground italic">
-                      {selectedApplication.protectionDetails}
-                    </p>
-                    <p><strong>Adultos:</strong> {selectedApplication.adultsCount} | <strong>Crianças:</strong> {selectedApplication.childrenCount}</p>
-                    <p><strong>Tempo sozinho:</strong> {selectedApplication.hoursAlone} horas/dia</p>
-                    <p><strong>Plano de viagens:</strong> {selectedApplication.travelCarePlan}</p>
-                  </div>
-
+              <section className="rounded-3xl border border-border/70 bg-card p-4 shadow-sm sm:p-6">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div><p className="text-xs font-bold uppercase tracking-wider text-primary">Qualidade dos anúncios</p><h2 className="font-serif text-xl font-bold text-foreground">Pets que precisam de revisão</h2></div>
+                  <Button variant="ghost" size="sm" className="min-h-[44px]" onClick={() => { setOrdenacaoAnimais("completude"); navegarParaAba("animais"); }}>Gerenciar<ArrowRight className="ml-1 h-4 w-4" /></Button>
                 </div>
-
-                {/* Internal Guardian Notes */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-foreground uppercase tracking-wider">
-                      Anotações Internas da ONG (Confidencial)
-                    </label>
-                    <button
-                      onClick={handleSaveNotes}
-                      className="min-h-[44px] px-2 text-xs font-bold text-primary hover:underline"
-                    >
-                      Salvar Nota
-                    </button>
-                  </div>
-                  <textarea
-                    rows={2}
-                    value={activeNote}
-                    onChange={(e) => {
-                      if (selectedApplication) {
-                        setEditingNotes((prev) => ({
-                          ...prev,
-                          [selectedApplication.id]: e.target.value
-                        }));
-                      }
-                    }}
-                    placeholder="Adicione observações da entrevista, impressões da visita ou histórico..."
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-
-                {/* Integrated Direct Chat */}
-                <div className="space-y-3 pt-4 border-t border-border/60">
-                  <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4 text-primary" /> Chat com o Adotante
-                  </h4>
-
-                  <div className="h-56 overflow-y-auto p-4 rounded-2xl bg-secondary/20 border border-border/50 space-y-3">
-                    {selectedApplication.messages.length === 0 ? (
-                      <p className="text-xs text-muted-foreground text-center py-8">
-                        Nenhuma mensagem trocada ainda. Inicie o contato com o candidato!
-                      </p>
-                    ) : (
-                      selectedApplication.messages.map((msg) => {
-                        const isSystem = msg.senderRole === "system";
-                        const isNGO = msg.senderRole === "guardian";
-
-                        if (isSystem) {
-                          return (
-                            <div key={msg.id} className="text-center py-1">
-                              <span className="text-[10px] text-muted-foreground px-2.5 py-1 rounded-full bg-secondary">
-                                {msg.content}
-                              </span>
-                            </div>
-                          );
-                        }
-
-                        return (
-                          <div
-                            key={msg.id}
-                            className={`flex flex-col ${isNGO ? "items-end" : "items-start"}`}
-                          >
-                            <span className="text-[10px] text-muted-foreground mb-0.5 px-1">
-                              {msg.senderName} &bull; {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                            <div
-                              className={`max-w-md p-3 rounded-2xl text-xs leading-relaxed ${isNGO
-                                  ? "bg-primary text-primary-foreground font-medium rounded-br-none"
-                                  : "bg-card border border-border text-foreground rounded-bl-none shadow-sm"
-                                }`}
-                            >
-                              {msg.content}
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-
-                  {/* Send input */}
-                  <form onSubmit={handleSendMessage} className="flex gap-2">
-                    <input
-                      type="text"
-                      value={chatMessage}
-                      onChange={(e) => setChatMessage(e.target.value)}
-                      placeholder="Escreva uma mensagem para combinar visita ou tirar dúvidas..."
-                      className="flex-1 px-4 py-2.5 rounded-full border border-border bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <Button type="submit" className="rounded-full px-5 text-xs bg-primary hover:bg-primary/90">
-                      <Send className="w-3.5 h-3.5 mr-1" /> Enviar
-                    </Button>
-                  </form>
-                </div>
-
-              </div>
-            ) : (
-              <div className="p-12 text-center text-muted-foreground bg-secondary/20 rounded-3xl border border-border">
-                {guardianApplications.length === 0
-                  ? "Sua instituição ainda não possui candidaturas registradas para triagem."
-                  : "Selecione uma candidatura na coluna lateral para visualizar o dossiê."}
-              </div>
-            )}
-          </div>
-
-        </div>
-      )}
-
-      {/* TAB 2: GESTÃO DE ANIMAIS */}
-      {activeTab === "animals" && petsLoading && (
-        <div className="flex min-h-[40vh] items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando animais" />
-        </div>
-      )}
-
-      {activeTab === "animals" && !petsLoading && petsError && (
-        <div role="alert" className="space-y-4 rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center sm:p-10">
-          <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
-          <div>
-            <h3 className="font-bold text-foreground">Animais indisponíveis</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{petsError}</p>
-          </div>
-          <Button variant="outline" onClick={() => void reloadPets()} className="rounded-full">Tentar novamente</Button>
-        </div>
-      )}
-
-      {activeTab === "animals" && !petsLoading && !petsError && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchAnimal}
-                onChange={(e) => setSearchAnimal(e.target.value)}
-                placeholder="Buscar animal por nome ou raça..."
-                className="min-h-[44px] w-full rounded-full border border-border bg-card py-2 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-
-            <Button asChild className="rounded-full text-xs bg-primary hover:bg-primary/90">
-              <Link href="/dashboard/pets/novo">
-                <Plus className="w-4 h-4 mr-1.5" /> Novo Pet
-              </Link>
-            </Button>
-          </div>
-
-          {guardianPets.length === 0 ? (
-            <div className="p-12 text-center rounded-3xl border border-dashed border-border/80 bg-card/60 space-y-4">
-              <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto">
-                <PawPrint className="w-7 h-7" />
-              </div>
-              <div className="space-y-1 max-w-md mx-auto">
-                <h3 className="font-bold text-base text-foreground">Nenhum animal cadastrado ainda</h3>
-                <p className="text-xs text-muted-foreground">
-                  Esta conta de ONG ainda não possui pets cadastrados para adoção. Cadastre novos animais para começar a receber candidaturas de adoção responsável.
-                </p>
-              </div>
-              <Button asChild className="rounded-full text-xs bg-primary hover:bg-primary/90">
-                <Link href="/dashboard/pets/novo">
-                  <Plus className="w-4 h-4 mr-1.5" /> Cadastrar Primeiro Pet
-                </Link>
-              </Button>
-            </div>
-          ) : filteredPets.length === 0 ? (
-            <div className="p-10 text-center rounded-3xl border border-border bg-card/50 text-muted-foreground text-xs">
-              Nenhum animal encontrado com o termo &quot;{searchAnimal}&quot;.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredPets.map((pet) => (
-                <div
-                  key={pet.id}
-                  className="p-4 rounded-3xl bg-card border border-border/60 shadow-sm flex flex-col justify-between space-y-4"
-                >
-                  <div className="flex gap-4">
-                    <div className="relative w-24 h-24 rounded-2xl overflow-hidden shrink-0 bg-secondary">
-                      <Image
-                        src={pet.photos[0]}
-                        alt={pet.name}
-                        fill
-                        sizes="96px"
-                        className="object-cover"
-                      />
-                    </div>
-
-                    <div className="space-y-1 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <h4 className="font-bold text-base text-foreground">{pet.name}</h4>
-                        <div className="flex shrink-0 items-center gap-1">
-                          <Button asChild variant="ghost" size="icon-sm" className="min-h-[44px] min-w-[44px]" title="Editar animal">
-                            <Link href={`/dashboard/pets/${pet.id}/editar`} aria-label={`Editar ${pet.name}`}>
-                              <Pencil className="w-4 h-4" />
-                            </Link>
-                          </Button>
-                          <button onClick={() => setPetIdParaExcluir(pet.id)} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-rose-500" title="Remover animal" aria-label={`Remover ${pet.name}`}>
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                {animaisGuardiao.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border p-7 text-center"><p className="text-sm text-muted-foreground">Cadastre seu primeiro animal para começar.</p><Button asChild variant="outline" className="mt-4 min-h-[44px] rounded-full"><Link href="/dashboard/pets/novo">Cadastrar pet</Link></Button></div>
+                ) : animaisQuePrecisamAtencao.length === 0 ? (
+                  <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-7 text-center"><ShieldCheck className="mx-auto mb-2 h-7 w-7 text-emerald-600 dark:text-emerald-400" /><p className="text-sm font-bold text-foreground">Anúncios bem preenchidos</p><p className="mt-1 text-xs text-muted-foreground">Todos os perfis atingiram pelo menos 80% de completude.</p></div>
+                ) : (
+                  <div className="space-y-3">
+                    {animaisQuePrecisamAtencao.slice(0, 5).map((pet) => {
+                      const completude = obterCompletudePet(pet);
+                      return (
+                        <div key={pet.id} className="flex items-center gap-3 rounded-2xl bg-muted/35 p-3">
+                          <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-muted"><Image src={pet.photos[0]} alt="" fill sizes="48px" className="object-cover" /></div>
+                          <div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-foreground">{pet.name}</p><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${completude}%` }} /></div><p className="mt-1 text-[11px] text-muted-foreground">{completude}% preenchido</p></div>
+                          <Button asChild variant="ghost" size="icon-sm" className="min-h-[44px] min-w-[44px]"><Link href={`/dashboard/pets/${pet.id}/editar`} aria-label={`Completar anúncio de ${pet.name}`}><Pencil className="h-4 w-4" /></Link></Button>
                         </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground">{pet.breed} &bull; {pet.approximateAge}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {pet.species === "dog" ? "Cachorro" : "Gato"} &bull; {pet.location.city}
-                      </p>
-                    </div>
+                      );
+                    })}
                   </div>
-
-                  {/* Status selector */}
-                  <div className="flex flex-col gap-2 border-t border-border/40 pt-2 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="text-xs font-semibold text-muted-foreground">Status Atual:</span>
-                    <select
-                      value={pet.status}
-                      onChange={(e) => updatePet(pet.id, { status: e.target.value as PetAdoptionStatus })}
-                      className="min-h-[44px] w-full rounded-xl border border-border bg-background px-2.5 py-1 text-xs font-bold text-foreground focus:outline-none sm:w-auto"
-                    >
-                      <option value="available">Disponível</option>
-                      <option value="in_process">Em Processo</option>
-                      <option value="adopted">Adotado</option>
-                    </select>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 3: MÉTRICAS */}
-      {activeTab === "metrics" && petsLoading && (
-        <div className="flex min-h-[40vh] items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando métricas" />
-        </div>
-      )}
-
-      {activeTab === "metrics" && !petsLoading && petsError && (
-        <div role="alert" className="space-y-4 rounded-3xl border border-destructive/30 bg-destructive/5 p-6 text-center sm:p-10">
-          <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
-          <div>
-            <h3 className="font-bold text-foreground">Métricas indisponíveis</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{petsError}</p>
-          </div>
-          <Button variant="outline" onClick={() => void reloadPets()} className="rounded-full">Tentar novamente</Button>
-        </div>
-      )}
-
-      {activeTab === "metrics" && !petsLoading && !petsError && (
-        <div className="space-y-6 sm:space-y-8">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-            <div className="p-4 sm:p-6 rounded-3xl bg-card border border-border/60 shadow-sm space-y-1">
-              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Pets Acolhidos</span>
-              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{totalPets}</p>
-              <p className="text-xs text-emerald-600 font-medium">
-                {petsThisMonth > 0 ? `${petsThisMonth} cadastrado${petsThisMonth > 1 ? "s" : ""} neste mês` : "Nenhum cadastro neste mês"}
-              </p>
-            </div>
-
-            <div className="p-4 sm:p-6 rounded-3xl bg-card border border-border/60 shadow-sm space-y-1">
-              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Adoções Concluídas</span>
-              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{adocoesConcluidas}</p>
-              <p className="text-xs text-emerald-600 font-medium">
-                {adocoesConcluidas > 0 ? `${adocoesConcluidas} adoção${adocoesConcluidas > 1 ? "ões" : ""} registrada${adocoesConcluidas > 1 ? "s" : ""}` : "Nenhuma adoção concluída"}
-              </p>
-            </div>
-
-            <div className="p-4 sm:p-6 rounded-3xl bg-card border border-border/60 shadow-sm space-y-1">
-              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Triagens em Aberto</span>
-              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{triagensEmAberto}</p>
-              <p className="text-xs text-primary font-medium">
-                {triagensEmAberto > 0 ? "Aguardando resposta da ONG" : "Sem pendências no momento"}
-              </p>
-            </div>
-
-            <div className="p-4 sm:p-6 rounded-3xl bg-card border border-border/60 shadow-sm space-y-1">
-              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Taxa de Sucesso</span>
-              <p className="font-serif text-2xl sm:text-4xl font-bold text-foreground">{adoptionRate === null ? "—" : `${adoptionRate}%`}</p>
-              <p className="text-xs text-muted-foreground font-medium">Adoções concluídas sobre pets cadastrados</p>
+                )}
+              </section>
             </div>
           </div>
+          )
+        )}
 
-          <div className="p-5 sm:p-8 rounded-3xl bg-secondary/30 border border-border/60 space-y-4">
-            <h3 className="font-bold text-lg text-foreground flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-primary" /> Cuidados cadastrados
-            </h3>
-            <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed max-w-3xl">
-              {totalPets > 0
-                ? `${petsWithRegisteredCare} de ${totalPets} animais estão marcados como vacinados e castrados. Revise os cadastros sempre que houver atualização veterinária.`
-                : "Cadastre animais para acompanhar aqui os cuidados veterinários informados."}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {petParaExcluir && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="titulo-excluir-pet">
-          <div className="w-full max-w-sm space-y-4 rounded-3xl border border-border bg-card p-6 shadow-2xl">
-            <h2 id="titulo-excluir-pet" className="font-serif text-xl font-bold text-foreground">Remover {petParaExcluir.name}?</h2>
-            <p className="text-sm leading-relaxed text-muted-foreground">O anúncio e suas fotos serão removidos. Esta ação não pode ser desfeita.</p>
-            <div className="grid grid-cols-2 gap-2 pt-2">
-              <Button variant="outline" disabled={estaExcluindoPet} onClick={() => setPetIdParaExcluir(null)}>Cancelar</Button>
-              <Button variant="destructive" disabled={estaExcluindoPet} onClick={handleDeletePet}>
-                {estaExcluindoPet ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Removendo...</> : "Remover"}
-              </Button>
+        {abaAtiva === "candidaturas" && (
+          applicationsLoading ? <div className="flex min-h-[40vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando candidaturas" /></div>
+          : applicationsError ? <EstadoErro titulo="Candidaturas indisponíveis" mensagem={applicationsError} aoTentarNovamente={reloadApplications} />
+          : <div className="space-y-5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div><p className="text-xs font-bold uppercase tracking-wider text-primary">Triagem responsável</p><h2 className="font-serif text-2xl font-bold text-foreground">Candidaturas recebidas</h2><p className="mt-1 text-sm text-muted-foreground">Filtre a fila, revise o dossiê e registre cada próximo passo.</p></div>
+                <p aria-live="polite" className="text-xs font-semibold text-muted-foreground">{candidaturasFiltradas.length} de {candidaturasGuardiao.length} candidatura(s)</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 rounded-2xl border border-border/60 bg-card p-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="relative sm:col-span-2 lg:col-span-1"><span className="sr-only">Buscar candidatura</span><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><input value={buscaCandidatura} onChange={(e) => setBuscaCandidatura(e.target.value)} placeholder="Candidato ou pet" className="min-h-[44px] w-full rounded-xl border border-border bg-background pl-10 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary" /></label>
+                <label><span className="sr-only">Filtrar por status</span><select value={statusCandidatura} onChange={(e) => setStatusCandidatura(e.target.value as ApplicationStatus | "todos")} className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 text-sm font-medium"><option value="todos">Todos os status</option>{Object.entries(CONFIGURACAO_STATUS_CANDIDATURA).map(([valor, info]) => <option key={valor} value={valor}>{info.rotulo}</option>)}</select></label>
+                <label><span className="sr-only">Filtrar por pet</span><select value={petCandidatura} onChange={(e) => setPetCandidatura(e.target.value)} className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 text-sm font-medium"><option value="todos">Todos os pets</option>{animaisGuardiao.map((pet) => <option key={pet.id} value={pet.id}>{pet.name}</option>)}</select></label>
+                <label><span className="sr-only">Ordenar candidaturas</span><select value={ordenacaoCandidaturas} onChange={(e) => setOrdenacaoCandidaturas(e.target.value as OrdenacaoCandidaturas)} className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 text-sm font-medium"><option value="recentes">Mais recentes</option><option value="antigas">Mais antigas</option><option value="atividade">Atividade recente</option></select></label>
+              </div>
+              <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+                <section aria-label="Lista de candidaturas" className="space-y-3 lg:col-span-4">
+                  {candidaturasFiltradas.length === 0 ? (
+                    <div className="rounded-3xl border border-dashed border-border bg-card/50 p-8 text-center"><FileCheck2 className="mx-auto mb-3 h-8 w-8 text-muted-foreground" /><p className="font-bold text-foreground">Nenhuma candidatura encontrada</p><p className="mt-1 text-xs text-muted-foreground">Ajuste os filtros ou aguarde novos formulários.</p></div>
+                  ) : candidaturasFiltradas.map((item) => {
+                    const selecionada = candidaturaSelecionada?.id === item.id;
+                    return (
+                      <button key={item.id} type="button" onClick={() => selecionarCandidatura(item.id)} className={`min-h-[88px] w-full rounded-2xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${selecionada ? "border-primary bg-primary/5 shadow-sm" : "border-border/60 bg-card hover:border-primary/30 hover:bg-muted/30"}`}>
+                        <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-bold text-foreground">{item.candidate.name}</p><p className="mt-0.5 truncate text-xs text-muted-foreground">Para {item.petName}</p></div><Badge variant="outline" className={`shrink-0 ${CONFIGURACAO_STATUS_CANDIDATURA[item.status].classe}`}>{CONFIGURACAO_STATUS_CANDIDATURA[item.status].rotulo}</Badge></div>
+                        <div className="mt-3 flex items-center justify-between border-t border-border/40 pt-2 text-[11px] text-muted-foreground"><span>{new Date(item.createdAt).toLocaleDateString("pt-BR")}</span><span>{item.messages.length} mensagem(ns)</span></div>
+                      </button>
+                    );
+                  })}
+                </section>
+                <div className="hidden lg:col-span-8 lg:block">{candidaturaSelecionada ? renderizarDossie(candidaturaSelecionada, "desktop") : <div className="rounded-3xl border border-border bg-muted/20 p-10 text-center text-sm text-muted-foreground">Selecione uma candidatura para abrir o dossiê.</div>}</div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+        )}
 
+        {abaAtiva === "animais" && (
+          petsLoading ? <div className="flex min-h-[40vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando animais" /></div>
+          : petsError ? <EstadoErro titulo="Animais indisponíveis" mensagem={petsError} aoTentarNovamente={() => void reloadPets()} />
+          : <div className="space-y-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-wider text-primary">Inventário de adoção</p><h2 className="font-serif text-2xl font-bold text-foreground">Seus animais</h2><p className="mt-1 text-sm text-muted-foreground">Encontre anúncios, acompanhe a procura e mantenha as informações atualizadas.</p></div><Button asChild variant="outline" className="min-h-[44px] rounded-full"><Link href="/dashboard/pets/novo"><Plus className="mr-2 h-4 w-4" />Novo pet</Link></Button></div>
+              <div className="grid grid-cols-1 gap-3 rounded-2xl border border-border/60 bg-card p-3 sm:grid-cols-2 lg:grid-cols-6">
+                <label className="relative sm:col-span-2"><span className="sr-only">Buscar animal</span><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><input value={buscaAnimal} onChange={(e) => setBuscaAnimal(e.target.value)} placeholder="Nome ou raça" className="min-h-[44px] w-full rounded-xl border border-border bg-background pl-10 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary" /></label>
+                <label><span className="sr-only">Filtrar status</span><select value={statusAnimal} onChange={(e) => setStatusAnimal(e.target.value as PetAdoptionStatus | "todos")} className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 text-sm font-medium"><option value="todos">Todos os status</option>{Object.entries(ROTULOS_STATUS_PET).map(([valor, rotulo]) => <option key={valor} value={valor}>{rotulo}</option>)}</select></label>
+                <label><span className="sr-only">Filtrar espécie</span><select value={especieAnimal} onChange={(e) => setEspecieAnimal(e.target.value as Pet["species"] | "todos")} className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 text-sm font-medium"><option value="todos">Todas as espécies</option><option value="dog">Cachorros</option><option value="cat">Gatos</option></select></label>
+                <label><span className="sr-only">Ordenar animais</span><select value={ordenacaoAnimais} onChange={(e) => setOrdenacaoAnimais(e.target.value as OrdenacaoAnimais)} className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 text-sm font-medium"><option value="recentes">Mais recentes</option><option value="nome">Nome</option><option value="completude">Menor completude</option></select></label>
+                <div className="hidden items-center justify-end gap-1 md:flex"><Button type="button" variant={modoAnimais === "cartoes" ? "secondary" : "ghost"} size="icon-sm" className="min-h-[44px] min-w-[44px]" onClick={() => setModoAnimais("cartoes")} aria-label="Exibir cartões"><Grid2X2 className="h-4 w-4" /></Button><Button type="button" variant={modoAnimais === "lista" ? "secondary" : "ghost"} size="icon-sm" className="min-h-[44px] min-w-[44px]" onClick={() => setModoAnimais("lista")} aria-label="Exibir lista"><List className="h-4 w-4" /></Button></div>
+              </div>
+              <div className="flex items-center justify-between text-xs text-muted-foreground"><span aria-live="polite">{animaisFiltrados.length} de {animaisGuardiao.length} animal(is)</span><span className="flex items-center gap-1"><SlidersHorizontal className="h-3.5 w-3.5" />Filtros ativos na sessão</span></div>
+              {animaisFiltrados.length === 0 ? (
+                <div className="rounded-3xl border border-dashed border-border bg-card/50 p-10 text-center"><PawPrint className="mx-auto mb-3 h-9 w-9 text-muted-foreground" /><p className="font-bold text-foreground">Nenhum animal encontrado</p><p className="mt-1 text-sm text-muted-foreground">Ajuste os filtros ou cadastre um novo pet.</p></div>
+              ) : modoAnimais === "lista" ? (
+                <div className="hidden overflow-hidden rounded-3xl border border-border bg-card md:block"><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b border-border bg-muted/40 text-xs text-muted-foreground"><tr><th className="p-4 font-semibold">Animal</th><th className="p-4 font-semibold">Status</th><th className="p-4 font-semibold">Candidaturas</th><th className="p-4 font-semibold">Completude</th><th className="p-4 text-right font-semibold">Ações</th></tr></thead><tbody>{animaisFiltrados.map((pet) => { const completude = obterCompletudePet(pet); return <tr key={pet.id} className="border-b border-border/60 last:border-0 hover:bg-muted/20"><td className="p-4"><div className="flex items-center gap-3"><div className="relative h-12 w-12 overflow-hidden rounded-xl bg-muted"><Image src={pet.photos[0]} alt="" fill sizes="48px" className="object-cover" /></div><div><p className="font-bold text-foreground">{pet.name}</p><p className="text-xs text-muted-foreground">{pet.breed} · {pet.species === "dog" ? "Cachorro" : "Gato"}</p></div></div></td><td className="p-4"><select value={pet.status} onChange={(e) => void updatePet(pet.id, { status: e.target.value as PetAdoptionStatus })} className="min-h-[44px] rounded-xl border border-border bg-background px-3 text-xs font-bold"><option value="available">Disponível</option><option value="in_process">Em processo</option><option value="adopted">Adotado</option></select></td><td className="p-4 text-muted-foreground">{contagemCandidaturasPorPet.get(pet.id) || 0}</td><td className="p-4"><span className="font-bold text-foreground">{completude}%</span></td><td className="p-4"><div className="flex justify-end gap-1"><Button asChild variant="ghost" size="icon-sm" className="min-h-[44px] min-w-[44px]"><Link href={`/pets/${pet.id}`} aria-label={`Ver anúncio de ${pet.name}`}><Eye className="h-4 w-4" /></Link></Button><Button asChild variant="ghost" size="icon-sm" className="min-h-[44px] min-w-[44px]"><Link href={`/dashboard/pets/${pet.id}/editar`} aria-label={`Editar ${pet.name}`}><Pencil className="h-4 w-4" /></Link></Button><Button variant="ghost" size="icon-sm" className="min-h-[44px] min-w-[44px] text-destructive" onClick={() => setPetIdParaExcluir(pet.id)} aria-label={`Remover ${pet.name}`}><Trash2 className="h-4 w-4" /></Button></div></td></tr>; })}</tbody></table></div></div>
+              ) : null}
+              <div className={`grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 ${modoAnimais === "lista" ? "md:hidden" : ""}`}>{animaisFiltrados.map((pet) => { const completude = obterCompletudePet(pet); return <article key={pet.id} className="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm"><div className="relative aspect-[16/9] bg-muted"><Image src={pet.photos[0]} alt={`Foto de ${pet.name}`} fill sizes="(max-width: 768px) 100vw, 33vw" className="object-cover" /><Badge className="absolute left-3 top-3" variant={pet.status === "available" ? "default" : "secondary"}>{ROTULOS_STATUS_PET[pet.status]}</Badge></div><div className="space-y-4 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-serif text-xl font-bold text-foreground">{pet.name}</h3><p className="truncate text-xs text-muted-foreground">{pet.breed} · {pet.approximateAge}</p></div><span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-bold text-foreground">{contagemCandidaturasPorPet.get(pet.id) || 0} candidatura(s)</span></div><div><div className="flex justify-between text-[11px] text-muted-foreground"><span>Completude do anúncio</span><strong className="text-foreground">{completude}%</strong></div><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${completude}%` }} /></div></div><label className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">Status<select value={pet.status} onChange={(e) => void updatePet(pet.id, { status: e.target.value as PetAdoptionStatus })} className="min-h-[44px] w-full rounded-xl border border-border bg-background px-3 font-bold text-foreground"><option value="available">Disponível</option><option value="in_process">Em processo</option><option value="adopted">Adotado</option></select></label><div className="grid grid-cols-3 gap-2 border-t border-border/50 pt-3"><Button asChild variant="ghost" size="sm" className="min-h-[44px]"><Link href={`/pets/${pet.id}`}><Eye className="mr-1 h-4 w-4" />Ver</Link></Button><Button asChild variant="outline" size="sm" className="min-h-[44px]"><Link href={`/dashboard/pets/${pet.id}/editar`}><Pencil className="mr-1 h-4 w-4" />Editar</Link></Button><Button variant="ghost" size="sm" className="min-h-[44px] text-destructive" onClick={() => setPetIdParaExcluir(pet.id)}><Trash2 className="mr-1 h-4 w-4" />Excluir</Button></div></div></article>; })}</div>
+            </div>
+        )}
+
+        {abaAtiva === "metricas" && (
+          petsLoading ? <div className="flex min-h-[40vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" aria-label="Carregando indicadores" /></div>
+          : petsError ? <EstadoErro titulo="Indicadores indisponíveis" mensagem={petsError} aoTentarNovamente={() => void reloadPets()} />
+          : <div className="space-y-6"><div><p className="text-xs font-bold uppercase tracking-wider text-primary">Dados reais do perfil</p><h2 className="font-serif text-2xl font-bold text-foreground">Indicadores</h2><p className="mt-1 text-sm text-muted-foreground">Resumo operacional calculado a partir dos animais e candidaturas registrados.</p></div><div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"><CartaoIndicador titulo="Pets cadastrados" valor={animaisGuardiao.length} descricao="Abrir gestão de animais" icone={PawPrint} aoClicar={() => navegarParaAba("animais")} /><CartaoIndicador titulo="Adoções concluídas" valor={adocoesConcluidas} descricao="Conclusões registradas" icone={CircleCheckBig} /><CartaoIndicador titulo="Triagens abertas" valor={candidaturasAbertas.length} descricao="Abrir fila de candidaturas" icone={FileCheck2} aoClicar={() => navegarParaAba("candidaturas")} /><CartaoIndicador titulo="Taxa de adoção" valor={taxaAdocao === null ? "—" : `${taxaAdocao}%`} descricao="Pets adotados sobre cadastrados" icone={BarChart3} /></div><div className="grid grid-cols-1 gap-6 lg:grid-cols-2"><section className="rounded-3xl border border-border/70 bg-card p-5 shadow-sm sm:p-6"><h3 className="font-serif text-xl font-bold text-foreground">Situação dos animais</h3><div className="mt-5 space-y-4">{([["Disponíveis", disponiveis], ["Em processo", emProcesso], ["Adotados", adotados]] as Array<[string, number]>).map(([rotulo, valor]) => { const percentual = animaisGuardiao.length ? Math.round((valor / animaisGuardiao.length) * 100) : 0; return <div key={rotulo}><div className="flex justify-between text-sm"><span className="text-muted-foreground">{rotulo}</span><strong className="text-foreground">{valor} · {percentual}%</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${percentual}%` }} /></div></div>; })}</div></section><section className="rounded-3xl border border-border/70 bg-card p-5 shadow-sm sm:p-6"><h3 className="flex items-center gap-2 font-serif text-xl font-bold text-foreground"><ShieldCheck className="h-5 w-5 text-primary" />Cuidados cadastrados</h3><p className="mt-4 text-4xl font-bold text-foreground">{cuidadosCompletos}<span className="text-lg font-medium text-muted-foreground">/{animaisGuardiao.length}</span></p><p className="mt-2 text-sm leading-relaxed text-muted-foreground">Animais marcados como vacinados, castrados e vermifugados. Atualize o cadastro sempre que houver um novo cuidado veterinário.</p><Button variant="outline" className="mt-5 min-h-[44px] rounded-full" onClick={() => navegarParaAba("animais")}>Revisar cadastros<ArrowRight className="ml-2 h-4 w-4" /></Button></section></div></div>
+        )}
+      </main>
+
+      <SheetContent isOpen={detalheMovelAberto && Boolean(candidaturaSelecionada)} onOpenChange={setDetalheMovelAberto} className="w-full max-w-full overflow-y-auto p-0 sm:max-w-xl lg:hidden">
+        <SheetHeader className="border-b border-border p-4 pr-14"><SheetTitle>Dossiê da candidatura</SheetTitle><SheetDescription>Revise as informações e atualize o andamento.</SheetDescription></SheetHeader>
+        <div className="p-3 sm:p-4">{candidaturaSelecionada && renderizarDossie(candidaturaSelecionada, "movel")}</div>
+      </SheetContent>
+
+      <AlertDialogContent isOpen={Boolean(alteracaoStatus)} onOpenChange={(aberto) => { if (!aberto && !estaAtualizandoStatus) setAlteracaoStatus(null); }}>
+        <AlertDialogHeader><AlertDialogTitle>Confirmar mudança de status?</AlertDialogTitle><AlertDialogDescription>{alteracaoStatus?.status === "completed" ? `A adoção de ${alteracaoStatus.candidatura.petName} será marcada como concluída e o pet passará para “Adotado”.` : alteracaoStatus?.candidatura.status === "completed" ? `A adoção será reaberta para avaliação e o status de ${alteracaoStatus.candidatura.petName} será recalculado.` : `A candidatura passará para “${alteracaoStatus ? CONFIGURACAO_STATUS_CANDIDATURA[alteracaoStatus.status].rotulo : ""}”. A alteração ficará registrada na conversa.`}</AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter><Button variant="outline" disabled={estaAtualizandoStatus} onClick={() => setAlteracaoStatus(null)}>Cancelar</Button><Button disabled={estaAtualizandoStatus} onClick={() => void confirmarAlteracaoStatus()}>{estaAtualizandoStatus && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Confirmar</Button></AlertDialogFooter>
+      </AlertDialogContent>
+
+      <AlertDialogContent isOpen={Boolean(petParaExcluir)} onOpenChange={(aberto) => { if (!aberto && !estaExcluindoPet) setPetIdParaExcluir(null); }}>
+        <AlertDialogHeader><AlertDialogTitle>Remover {petParaExcluir?.name}?</AlertDialogTitle><AlertDialogDescription>O anúncio e suas fotos serão removidos permanentemente. Esta ação não pode ser desfeita.</AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter><Button variant="outline" disabled={estaExcluindoPet} onClick={() => setPetIdParaExcluir(null)}>Cancelar</Button><Button variant="destructive" disabled={estaExcluindoPet} onClick={() => void removerPet()}>{estaExcluindoPet && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Remover</Button></AlertDialogFooter>
+      </AlertDialogContent>
     </div>
   );
 }

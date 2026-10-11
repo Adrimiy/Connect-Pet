@@ -34,7 +34,8 @@ create table if not exists public.pets (
   city text,
   state text,
   neighborhood text,
-  created_at timestamp with time zone not null default timezone('utc'::text, now())
+  created_at timestamp with time zone not null default timezone('utc'::text, now()),
+  updated_at timestamp with time zone not null default timezone('utc'::text, now())
 );
 
 -- Índices para otimização de busca na tabela pets
@@ -70,7 +71,8 @@ create table if not exists public.applications (
   guardian_name text,
   guardian_type text,
   candidate_id text,
-  created_at timestamp with time zone not null default timezone('utc'::text, now())
+  created_at timestamp with time zone not null default timezone('utc'::text, now()),
+  updated_at timestamp with time zone not null default timezone('utc'::text, now())
 );
 
 -- Índices para otimização de busca na tabela applications
@@ -78,6 +80,14 @@ create table if not exists public.applications (
 create index if not exists idx_applications_pet_id on public.applications (pet_id);
 create index if not exists idx_applications_guardian_id on public.applications (guardian_id);
 create index if not exists idx_applications_candidate_email on public.applications (candidate_email);
+create index if not exists idx_applications_guardian_criado
+  on public.applications (guardian_id, created_at desc);
+
+-- Garante compatibilidade com bancos criados antes da adoção dos campos de atualização.
+alter table public.pets
+  add column if not exists updated_at timestamp with time zone not null default timezone('utc'::text, now());
+alter table public.applications
+  add column if not exists updated_at timestamp with time zone not null default timezone('utc'::text, now());
 
 -- 4. Tabela de Mensagens da Candidatura (application_messages)
 create table if not exists public.application_messages (
@@ -631,7 +641,60 @@ create trigger trg_applications_marcar_pet_em_processo
   after insert on public.applications
   for each row execute function public.applications_marcar_pet_em_processo();
 
--- 10.5 Registra a mensagem de sistema e sincroniza a conclusão da adoção com o pet.
+-- 10.5 Mantém datas de atualização e protege o fluxo das candidaturas.
+create or replace function public.atualizar_data_modificacao()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.updated_at := timezone('utc'::text, now());
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_pets_atualizar_data_modificacao on public.pets;
+create trigger trg_pets_atualizar_data_modificacao
+  before update on public.pets
+  for each row execute function public.atualizar_data_modificacao();
+
+drop trigger if exists trg_applications_atualizar_data_modificacao on public.applications;
+create trigger trg_applications_atualizar_data_modificacao
+  before update on public.applications
+  for each row execute function public.atualizar_data_modificacao();
+
+-- Evita saltos que contornem a triagem. A reabertura de uma adoção concluída é permitida
+-- somente para "em avaliação", deixando a correção explícita e reversível.
+create or replace function public.applications_validar_transicao_status()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.status is not distinct from old.status then
+    return new;
+  end if;
+
+  if not (
+    (old.status = 'pending' and new.status in ('under_review', 'rejected'))
+    or (old.status = 'under_review' and new.status in ('pending', 'approved', 'rejected'))
+    or (old.status = 'approved' and new.status in ('under_review', 'rejected', 'completed'))
+    or (old.status = 'rejected' and new.status = 'under_review')
+    or (old.status = 'completed' and new.status = 'under_review')
+  ) then
+    raise exception 'Transição de status inválida: % para %.', old.status, new.status;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_applications_validar_transicao_status on public.applications;
+create trigger trg_applications_validar_transicao_status
+  before update of status on public.applications
+  for each row execute function public.applications_validar_transicao_status();
+
+-- Registra a mensagem de sistema e sincroniza a conclusão ou reabertura com o pet.
 -- A função valida o responsável antes de atualizar o pet com privilégios internos do banco.
 create or replace function public.applications_registrar_mudanca_status()
 returns trigger
@@ -668,6 +731,31 @@ begin
         set status = 'adopted'
         where id = new.pet_id
           and guardian_id = new.guardian_id;
+    elsif new.pet_id is not null then
+      update public.pets p
+        set status = case
+          when exists (
+            select 1
+            from public.applications concluida
+            where concluida.pet_id = new.pet_id
+              and concluida.guardian_id = new.guardian_id
+              and concluida.id <> new.id
+              and concluida.status = 'completed'
+          ) then 'adopted'
+          when exists (
+            select 1
+            from public.applications aberta
+            where aberta.pet_id = new.pet_id
+              and aberta.guardian_id = new.guardian_id
+              and aberta.status in ('pending', 'under_review', 'approved')
+          ) then 'in_process'
+          else 'available'
+        end
+        where p.id = new.pet_id
+          and p.guardian_id = new.guardian_id
+          -- Não desfaz uma adoção marcada manualmente. A exceção é a reabertura explícita
+          -- de uma candidatura concluída, que precisa recalcular o andamento do pet.
+          and (p.status is distinct from 'adopted' or old.status = 'completed');
     end if;
   end if;
   return new;
@@ -779,6 +867,8 @@ revoke execute on function public.applications_preencher_dados() from public, an
 revoke execute on function public.applications_proteger_dados_enviados() from public, anon, authenticated;
 revoke execute on function public.application_messages_preencher_remetente() from public, anon, authenticated;
 revoke execute on function public.applications_marcar_pet_em_processo() from public, anon, authenticated;
+revoke execute on function public.atualizar_data_modificacao() from public, anon, authenticated;
+revoke execute on function public.applications_validar_transicao_status() from public, anon, authenticated;
 revoke execute on function public.applications_registrar_mudanca_status() from public, anon, authenticated;
 revoke execute on function public.handle_new_user() from public, anon, authenticated;
 revoke execute on function public.profiles_antes_de_gravar() from public, anon, authenticated;

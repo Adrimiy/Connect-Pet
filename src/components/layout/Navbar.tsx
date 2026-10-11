@@ -257,7 +257,7 @@ export function Navbar() {
                       onClick={() => setProfileDropdownOpen(false)}
                       className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-foreground rounded-xl hover:bg-secondary transition-colors"
                     >
-                      <LayoutDashboard className="w-4 h-4 text-primary" /> Painel da ONG
+                      <LayoutDashboard className="w-4 h-4 text-primary" /> Painel de gestão
                     </Link>
                   )}
 
@@ -338,7 +338,7 @@ export function Navbar() {
                 onClick={() => setMobileMenuOpen(false)}
                 className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold text-muted-foreground hover:bg-secondary"
               >
-                <LayoutDashboard className="w-4 h-4 text-primary" /> Painel da ONG
+                <LayoutDashboard className="w-4 h-4 text-primary" /> Painel de gestão
               </Link>
             )}
           </nav>
