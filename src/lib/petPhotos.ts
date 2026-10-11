@@ -105,9 +105,18 @@ export async function enviarFotosPet(fotos: FotoPet[], atualizar: AtualizarFotos
   }
 
   const supabase = createClient();
-  const { data, error: erroSessao } = await supabase.auth.getUser();
-  if (erroSessao || !data.user) {
-    throw new Error("Para enviar fotos é preciso estar conectado com uma conta real. Faça login e tente novamente.");
+  const { data: dadosSessao, error: erroLeituraSessao } = await supabase.auth.getSession();
+  if (erroLeituraSessao || !dadosSessao.session) {
+    throw new Error("Sua sessão expirou ou não foi concluída. Saia da conta, entre novamente e tente enviar as fotos.");
+  }
+
+  const { data, error: erroValidacao } = await supabase.auth.getUser(dadosSessao.session.access_token);
+  if (erroValidacao || !data.user) {
+    throw new Error(
+      erroValidacao
+        ? `Não foi possível validar sua sessão: ${erroValidacao.message}`
+        : "Não foi possível validar sua sessão. Entre novamente e tente enviar as fotos."
+    );
   }
   const userId = data.user.id;
 

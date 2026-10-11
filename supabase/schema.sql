@@ -333,6 +333,17 @@ create policy "Pet photos: authenticated upload to own folder"
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
+-- O Storage devolve os metadados do objeto apó o INSERT; por isso o proprietário
+-- também precisa poder selecionar os arquivos existentes em sua própria pasta.
+drop policy if exists "Pet photos: owner can read own files" on storage.objects;
+create policy "Pet photos: owner can read own files"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'pet-photos'
+    and owner_id = (select auth.uid())::text
+  );
+
 drop policy if exists "Pet photos: owner can update own files" on storage.objects;
 create policy "Pet photos: owner can update own files"
   on storage.objects for update
@@ -355,8 +366,8 @@ create policy "Pet photos: owner can delete own files"
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
--- Leitura: o bucket é público, então as URLs públicas funcionam sem política de SELECT.
--- Propositalmente NÃO há política de SELECT em storage.objects para anon, o que impede listar o conteúdo do bucket.
+-- A leitura das URLs públicas continua sendo feita pelo endpoint público do bucket.
+-- A política SELECT acima não permite listagem anônima e limita usuários autenticados aos próprios objetos.
 
 -- ==============================================================================
 -- 10. Correções da análise do banco (triggers, colunas e proteções adicionais)

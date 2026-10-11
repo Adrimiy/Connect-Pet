@@ -15,7 +15,7 @@ import {
   SpeciesPreference,
   SizePreference
 } from '../types';
-import { mockPets as initialMockPets, demoAdopter } from '../data/mockPets';
+import { mockPets as initialMockPets } from '../data/mockPets';
 import { createClient } from '@/lib/client';
 import { removerFotosDoStorage } from '@/lib/petPhotos';
 import type { AuthFeature, AuthPromptState } from '@/components/auth/auth-features';
@@ -38,7 +38,6 @@ interface AppContextType {
   currentUser: CurrentUser | null;
   setCurrentUser: (user: CurrentUser | null) => void;
   updateUserProfile: (updates: Partial<CurrentUser> & { avatar?: string | null }) => Promise<void>;
-  switchUser: (role: 'adopter' | 'guardian') => void;
   logout: () => void | Promise<void>;
 
   // Controle de acesso: retorna true se autenticado; caso contrário abre o modal de acesso restrito
@@ -162,9 +161,13 @@ async function fetchUserProfile(supabaseClient: ReturnType<typeof createClient>,
   const meta = (sessionUser.user_metadata || {}) as Record<string, unknown>;
   const isGuardian = meta.role === 'guardian';
 
-  // Se houver resquício de avatar em base64 no metadata do Auth, limpa em background para diminuir os cookies JWT
+  // Remove resquícios de avatar Base64 do JWT antes de continuar. Sem aguardar,
+  // uma navegação pode reenviar o cookie antigo e ultrapassar o limite de headers.
   if (typeof meta.avatar === 'string' && meta.avatar.startsWith('data:')) {
-    supabaseClient.auth.updateUser({ data: { avatar: null } }).catch(() => {});
+    const { error } = await supabaseClient.auth.updateUser({ data: { avatar: null } });
+    if (error) {
+      console.warn('Não foi possível remover o avatar Base64 dos metadados de autenticação:', error.message);
+    }
   }
 
   try {
@@ -289,16 +292,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return 'system';
   });
 
-  // 2. User State - Inicia estritamente nulo se não houver sessão salva
-  const [currentUser, setCurrentUserState] = useState<CurrentUser | null>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const savedUser = localStorage.getItem(STORAGE_KEYS.USER);
-        if (savedUser) return JSON.parse(savedUser);
-      } catch { }
-    }
-    return null;
-  });
+  // O perfil visual só é preenchido depois que uma sessão real do Supabase é confirmada.
+  const [currentUser, setCurrentUserState] = useState<CurrentUser | null>(null);
 
   // 3. Pets State
   const [pets, setPetsState] = useState<Pet[]>(() => {
@@ -397,23 +392,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async function handleUserSession(sessionUser: SupabaseUser | null) {
       if (!sessionUser) {
         if (isMounted) {
-          // Permite que contas mockadas/teste persistam no localStorage
-          try {
-            const savedUser = localStorage.getItem(STORAGE_KEYS.USER);
-            if (savedUser) {
-              const parsed = JSON.parse(savedUser);
-              if (
-                parsed &&
-                (parsed.id?.startsWith("guardian-") ||
-                  parsed.id?.startsWith("adopter-") ||
-                  parsed.id?.startsWith("mock-"))
-              ) {
-                setCurrentUserState(parsed);
-                return;
-              }
-            }
-          } catch { }
-
           setCurrentUserState(null);
           setFavoritesState([]);
           try {
@@ -710,33 +688,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       removeToast(id);
     }, 4500);
   }, [removeToast]);
-
-  // Alternar rapidamente para usuário mock de demonstração
-  const switchUser = useCallback((role: 'adopter' | 'guardian' = 'guardian') => {
-    const userToSet: CurrentUser = role === 'guardian' ? {
-      id: 'guardian-esperanca-1',
-      role: 'guardian',
-      guardianType: 'ngo',
-      name: 'ONG Esperança Animal',
-      responsibleName: 'Dra. Helena Silveira',
-      document: '32.184.902/0001-45',
-      email: 'contato@ongesperanca.org.br',
-      primaryPhone: '(11) 97123-9988',
-      city: 'São Paulo',
-      state: 'SP',
-      neighborhood: 'Vila Mariana',
-      description: 'Instituição sem fins lucrativos dedicada ao acolhimento e proteção de animais.',
-      bio: 'Trabalhando pelo bem-estar animal com amor e transparência.',
-      verified: true,
-      avatar: undefined
-    } : demoAdopter;
-
-    setCurrentUserState(userToSet);
-    try {
-      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(userToSet));
-    } catch { }
-    showToast('Conectado como ONG', `${userToSet.name} ativa com dados mockados.`, 'success');
-  }, [showToast]);
 
   const logout = useCallback(async () => {
     if (supabase) {
@@ -1575,7 +1526,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     currentUser,
     setCurrentUser,
     updateUserProfile,
-    switchUser,
     logout,
     requireAuth,
     authPrompt,
@@ -1607,7 +1557,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     currentUser,
     setCurrentUser,
     updateUserProfile,
-    switchUser,
     logout,
     requireAuth,
     authPrompt,

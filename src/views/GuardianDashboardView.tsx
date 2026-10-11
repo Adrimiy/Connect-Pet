@@ -38,7 +38,6 @@ import { FotoPet, enviarFotosPet } from "@/lib/petPhotos";
 export function GuardianDashboardView() {
   const {
     currentUser,
-    setCurrentUser,
     pets,
     addPet,
     updatePet,
@@ -222,32 +221,7 @@ export function GuardianDashboardView() {
               Você precisa estar conectado à sua conta de ONG ou Protetor para gerenciar animais e candidaturas.
             </p>
           </div>
-          <div className="space-y-2.5 pt-2">
-            <Button
-              onClick={() => {
-                setCurrentUser({
-                  id: "guardian-esperanca-1",
-                  role: "guardian",
-                  guardianType: "ngo",
-                  name: "ONG Esperança Animal",
-                  responsibleName: "Dra. Helena Silveira",
-                  document: "32.184.902/0001-45",
-                  email: "contato@ongesperanca.org.br",
-                  primaryPhone: "(11) 97123-9988",
-                  city: "São Paulo",
-                  state: "SP",
-                  neighborhood: "Vila Mariana",
-                  description: "Instituição sem fins lucrativos dedicada ao acolhimento e proteção de animais.",
-                  bio: "Trabalhando pelo bem-estar animal com muito amor e responsabilidade.",
-                  verified: true,
-                  avatar: undefined
-                });
-                showToast("Conectado como ONG", "Acesso liberado com dados mockados.", "success");
-              }}
-              className="rounded-full bg-primary hover:bg-primary/90 w-full"
-            >
-              Entrar como ONG (Dados Mockados)
-            </Button>
+          <div className="pt-2">
             <Button asChild variant="outline" className="rounded-full w-full">
               <Link href="/login?redirect=/dashboard">Fazer Login com E-mail e Senha</Link>
             </Button>

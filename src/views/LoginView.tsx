@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useApp } from "@/context/AppContext";
@@ -22,7 +22,7 @@ export function LoginView() {
   const redirect = searchParams.get("redirect") || "/";
   const initialEmail = searchParams.get("email") || "";
 
-  const { showToast, setCurrentUser } = useApp();
+  const { showToast } = useApp();
 
   const [roleTab, setRoleTab] = useState<"adopter" | "guardian">("adopter");
   const [email, setEmail] = useState(initialEmail);
@@ -30,38 +30,6 @@ export function LoginView() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  // Perfil mockado de ONG para demonstração/testes (sem pets publicados inicialmente)
-  const mockNgoUser = useMemo(
-    () => ({
-      id: "guardian-esperanca-1",
-      role: "guardian" as const,
-      guardianType: "ngo" as const,
-      name: "ONG Esperança Animal",
-      responsibleName: "Dra. Helena Silveira",
-      document: "32.184.902/0001-45",
-      email: "contato@ongesperanca.org.br",
-      primaryPhone: "(11) 97123-9988",
-      city: "São Paulo",
-      state: "SP",
-      neighborhood: "Vila Mariana",
-      description: "Instituição sem fins lucrativos dedicada ao acolhimento e proteção de animais.",
-      bio: "Trabalhando pelo bem-estar animal com muito amor e responsabilidade.",
-      verified: true,
-      avatar: undefined
-    }),
-    []
-  );
-
-  // Se a rota contiver ?mock=ong ou ?mock=guardian, loga automaticamente
-  useEffect(() => {
-    const mockParam = searchParams.get("mock");
-    if (mockParam === "ong" || mockParam === "guardian") {
-      setCurrentUser(mockNgoUser);
-      showToast("Conectado como ONG", "Login realizado com sucesso na conta da ONG (dados mockados).", "success");
-      router.push("/dashboard");
-    }
-  }, [searchParams, setCurrentUser, showToast, router, mockNgoUser]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,21 +54,6 @@ export function LoginView() {
         setErrorMessage("Por favor, informe um endereço de e-mail válido.");
         isSubmittingRef.current = false;
         setIsSubmitting(false);
-        return;
-      }
-
-      // Atalho de login mockado para conta da ONG
-      if (
-        targetEmail.toLowerCase() === "contato@ongesperanca.org.br" ||
-        targetEmail.toLowerCase() === "ong@teste.com" ||
-        targetEmail.toLowerCase().includes("ong.esperanca")
-      ) {
-        setCurrentUser({
-          ...mockNgoUser,
-          email: targetEmail
-        });
-        showToast("Bem-vindo(a)!", "Conectado à conta da ONG (dados mockados).", "success");
-        router.push(redirect === "/" ? "/dashboard" : redirect);
         return;
       }
 
