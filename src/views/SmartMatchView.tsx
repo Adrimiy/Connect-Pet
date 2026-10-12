@@ -11,101 +11,106 @@ import {
   RotateCcw,
   CheckCircle2,
   Heart,
-  ShieldCheck,
-  Home,
-  Clock,
   Baby,
   PawPrint,
   Sliders,
   ChevronRight,
-  Info
+  Info,
+  Loader2,
+  LogIn
 } from "lucide-react";
 
 export function SmartMatchView() {
-  const { pets, calculateSmartMatch } = useApp();
+  const { pets, calculateSmartMatch, enrichSmartMatchWithAI, currentUser } = useApp();
 
   const [hasStarted, setHasStarted] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [showResults, setShowResults] = useState(false);
+  const [resultadosComIa, setResultadosComIa] = useState<MatchResult[]>([]);
+  const [estadoIa, setEstadoIa] = useState<"ocioso" | "carregando" | "concluido" | "indisponivel" | "login">("ocioso");
 
   const [quizData, setQuizData] = useState<SmartMatchQuizData>({
-    housingType: "apartamento",
-    hasProtection: true,
-    hoursAlone: 4,
-    hasChildren: false,
-    hasOtherPets: false,
     preferredSpecies: "all",
     preferredSize: "all",
-    energyLevel: "calm"
+    preferredAge: "all",
+    preferredEnergy: "all",
+    hasChildren: false,
+    residentPets: "none",
+    acceptsSpecialNeeds: true
   });
 
   const questions = [
     {
-      title: "Qual é o seu tipo de moradia?",
-      subtitle: "Animais diferentes se adaptam melhor a espaços específicos.",
-      field: "housingType",
-      options: [
-        { label: "Apartamento", value: "apartamento", icon: Home },
-        { label: "Casa Térrea", value: "casa", icon: Home },
-        { label: "Sobrado", value: "sobrado", icon: Home },
-        { label: "Chácara / Sítio", value: "sitio", icon: Home }
-      ]
-    },
-    {
-      title: "Sua moradia possui proteção física completa?",
-      subtitle: "Telas de segurança em janelas/sacadas ou muros altos sem rota de fuga.",
-      field: "hasProtection",
-      options: [
-        { label: "Sim, 100% telado / muros altos seguros", value: true, icon: ShieldCheck },
-        { label: "Ainda não, mas pretendo instalar", value: false, icon: ShieldCheck }
-      ]
-    },
-    {
-      title: "Quantas horas o pet ficaria sozinho por dia?",
-      subtitle: "Importante para avaliar a necessidade de companhia e nível de dependência.",
-      field: "hoursAlone",
-      options: [
-        { label: "Até 3 horas (Home office / Família sempre presente)", value: 2, icon: Clock },
-        { label: "De 4 a 6 horas (Meio período)", value: 5, icon: Clock },
-        { label: "Mais de 7 horas (Tempo integral no escritório)", value: 8, icon: Clock }
-      ]
-    },
-    {
-      title: "Há crianças ou idosos convivendo na casa?",
-      subtitle: "Animais pacientes e gentis são ideais para essa composição familiar.",
+      title: "Há crianças pequenas que conviverão com o pet?",
+      subtitle: "A resposta será comparada somente com a convivência já observada e informada pelo responsável.",
       field: "hasChildren",
       options: [
         { label: "Sim, temos crianças pequenas em casa", value: true, icon: Baby },
-        { label: "Apenas adultos e jovens", value: false, icon: Baby }
+        { label: "Não há crianças pequenas na residência", value: false, icon: Baby }
       ]
     },
     {
-      title: "Você já possui outros animais em casa atualmente?",
-      subtitle: "Para priorizarmos pets sociáveis com outros cães ou gatos.",
-      field: "hasOtherPets",
+      title: "Quais animais já vivem na residência?",
+      subtitle: "Usaremos apenas avaliações de convivência com cães e gatos registradas no anúncio.",
+      field: "residentPets",
       options: [
-        { label: "Sim, já tenho cão ou gato residente", value: true, icon: PawPrint },
-        { label: "Não, será o único animal no momento", value: false, icon: PawPrint }
+        { label: "Nenhum", value: "none", icon: PawPrint },
+        { label: "Cão ou cães", value: "dog", icon: PawPrint },
+        { label: "Gato ou gatos", value: "cat", icon: PawPrint },
+        { label: "Cães e gatos", value: "both", icon: PawPrint }
       ]
     },
     {
-      title: "Qual nível de energia combina mais com a sua rotina?",
-      subtitle: "Para garantir harmonia entre seu tempo livre e as necessidades do pet.",
-      field: "energyLevel",
+      title: "Você considera adotar um pet com necessidades especiais?",
+      subtitle: "Essa resposta é comparada com as necessidades informadas no anúncio; detalhes serão tratados no dossiê e na conversa com o responsável.",
+      field: "acceptsSpecialNeeds",
       options: [
-        { label: "Calmo (Gosta de carinho, sonecas e ambiente tranquilo)", value: "calm", icon: Sliders },
-        { label: "Moderado (Passeios diários e brincadeiras pontuais)", value: "moderate", icon: Sliders },
-        { label: "Alto (Adora correr, caminhadas longas e brincadeiras)", value: "high", icon: Sliders }
+        { label: "Sim, estou aberto e quero conhecer os cuidados", value: true, icon: Heart },
+        { label: "Não neste momento", value: false, icon: Heart }
       ]
     },
     {
-      title: "Você tem preferência por espécie ou porte?",
+      title: "Qual nível de energia você procura?",
+      subtitle: "O nível escolhido será comparado diretamente com o perfil informado no anúncio.",
+      field: "preferredEnergy",
+      options: [
+        { label: "Sem preferência de energia", value: "all", icon: Sliders },
+        { label: "Calmo", value: "calm", icon: Sliders },
+        { label: "Moderado", value: "moderate", icon: Sliders },
+        { label: "Alto", value: "high", icon: Sliders }
+      ]
+    },
+    {
+      title: "Você tem preferência por espécie?",
       subtitle: "Seja flexível se quiser ver mais opções compatíveis.",
       field: "preferredSpecies",
       options: [
         { label: "Tanto faz, quero o mais compatível", value: "all", icon: Heart },
         { label: "Prefiro Cão", value: "dog", icon: PawPrint },
         { label: "Prefiro Gato", value: "cat", icon: PawPrint }
+      ]
+    },
+    {
+      title: "Qual porte você se sente preparado para cuidar?",
+      subtitle: "O porte influencia transporte, manejo, espaço e custos, mas não determina sozinho a adaptação.",
+      field: "preferredSize",
+      options: [
+        { label: "Sem preferência de porte", value: "all", icon: Sliders },
+        { label: "Pequeno", value: "small", icon: Sliders },
+        { label: "Médio", value: "medium", icon: Sliders },
+        { label: "Grande", value: "large", icon: Sliders }
+      ]
+    },
+    {
+      title: "Você tem preferência por faixa etária?",
+      subtitle: "A faixa etária está disponível em todos os anúncios e influencia a ordem das recomendações.",
+      field: "preferredAge",
+      options: [
+        { label: "Sem preferência de idade", value: "all", icon: Sliders },
+        { label: "Filhote", value: "puppy", icon: PawPrint },
+        { label: "Jovem", value: "young", icon: PawPrint },
+        { label: "Adulto", value: "adult", icon: PawPrint },
+        { label: "Idoso", value: "senior", icon: PawPrint }
       ]
     }
   ];
@@ -115,22 +120,37 @@ export function SmartMatchView() {
     if (currentStep < questions.length - 1) {
       setCurrentStep(currentStep + 1);
     } else {
+      setResultadosComIa([]);
+      setEstadoIa(currentUser ? "ocioso" : "login");
       setShowResults(true);
     }
   };
 
   // Compute matches
-  const matchResults: MatchResult[] = React.useMemo(() => {
+  const resultadosLocais: MatchResult[] = React.useMemo(() => {
     if (!showResults) return [];
     return pets
+      .filter((pet) => pet.status === "available")
       .map((pet) => calculateSmartMatch(quizData, pet))
       .sort((a, b) => b.score - a.score);
   }, [showResults, pets, quizData, calculateSmartMatch]);
+
+  const matchResults = resultadosComIa.length > 0 ? resultadosComIa : resultadosLocais;
+
+  const contextualizarComIa = async () => {
+    if (!currentUser || resultadosLocais.length === 0 || estadoIa === "carregando") return;
+    setEstadoIa("carregando");
+    const resultados = await enrichSmartMatchWithAI(quizData, resultadosLocais);
+    setResultadosComIa(resultados);
+    setEstadoIa(resultados.some((item) => item.origemAnalise === "ia") ? "concluido" : "indisponivel");
+  };
 
   const restartQuiz = () => {
     setCurrentStep(0);
     setShowResults(false);
     setHasStarted(false);
+    setResultadosComIa([]);
+    setEstadoIa("ocioso");
   };
 
   return (
@@ -140,7 +160,7 @@ export function SmartMatchView() {
       {!hasStarted && !showResults && (
         <div className="max-w-3xl mx-auto text-center space-y-4 sm:space-y-6 py-6 sm:py-12">
           <div className="inline-flex items-center gap-2 px-3.5 sm:px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-[11px] sm:text-xs font-bold uppercase tracking-wider">
-            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Algoritmo Determinístico de Compatibilidade
+            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> IA explicável + critérios auditáveis
           </div>
 
           <h1 className="font-serif text-2xl sm:text-4xl md:text-5xl font-bold text-foreground leading-tight">
@@ -148,7 +168,7 @@ export function SmartMatchView() {
           </h1>
 
           <p className="text-xs sm:text-base text-muted-foreground leading-relaxed max-w-xl mx-auto">
-            Adoções bem-sucedidas acontecem quando o perfil comportamental do animal se alinha à rotina e ao espaço do tutor. Responda a 7 perguntas rápidas e descubra os animais ideais para o seu lar.
+            Compare suas preferências e a composição do lar com informações objetivas dos anúncios. O resultado ajuda a descobrir pets, sem substituir a conversa com a ONG ou o doador.
           </p>
 
           <div className="pt-2 sm:pt-4">
@@ -242,7 +262,7 @@ export function SmartMatchView() {
                 Seus Animais Ideais Ranqueados
               </h2>
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                Com base no seu espaço, rotina e dinâmica familiar, ordenamos os pets do catálogo por compatibilidade mútua.
+                Comparamos suas respostas somente com espécie, porte, idade, energia, necessidades especiais e convivência registrada para cada pet. Informações não avaliadas não geram compatibilidade positiva.
               </p>
             </div>
 
@@ -253,6 +273,60 @@ export function SmartMatchView() {
               <RotateCcw className="w-3.5 h-3.5" /> Refazer Questionário
             </button>
           </div>
+
+          {resultadosLocais.length > 0 && <div className="rounded-2xl border border-border/70 bg-muted/35 p-4 text-xs text-muted-foreground">
+            {estadoIa === "ocioso" && (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="leading-relaxed">
+                  O ranking abaixo já está pronto e não depende de IA. Ao contextualizar, apenas suas preferências e a composição geral do lar — sem nome ou contato — serão enviadas ao GroqCloud.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void contextualizarComIa()}
+                  className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-full bg-primary px-4 font-semibold text-primary-foreground hover:bg-primary/90"
+                >
+                  <Sparkles className="h-4 w-4" /> Contextualizar com IA
+                </button>
+              </div>
+            )}
+            {estadoIa === "carregando" && (
+              <p className="flex items-center gap-2" role="status">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" /> A IA está contextualizando os três melhores resultados. O ranking local já está disponível.
+              </p>
+            )}
+            {estadoIa === "concluido" && (
+              <p className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary" /> Explicações contextualizadas por IA. As notas continuam sendo calculadas por critérios fixos e auditáveis.
+              </p>
+            )}
+            {estadoIa === "indisponivel" && (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="flex items-center gap-2">
+                  <Info className="h-4 w-4 shrink-0 text-primary" /> A IA está indisponível ou atingiu a cota gratuita. O ranking local continua disponível.
+                </p>
+                <button type="button" onClick={() => void contextualizarComIa()} className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-full border border-border bg-background px-4 font-semibold text-foreground hover:bg-muted">
+                  Tentar novamente
+                </button>
+              </div>
+            )}
+            {estadoIa === "login" && (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p>A pontuação local está pronta. Entre na sua conta para adicionar explicações contextualizadas pela IA.</p>
+                <Link href="/login?redirect=/match" className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-full border border-border bg-background px-4 font-semibold text-foreground hover:bg-muted">
+                  <LogIn className="h-4 w-4" /> Entrar para usar IA
+                </Link>
+              </div>
+            )}
+          </div>}
+
+          {resultadosLocais.length === 0 && (
+            <div className="rounded-3xl border border-dashed border-border bg-card p-6 text-center sm:p-10">
+              <PawPrint className="mx-auto h-10 w-10 text-muted-foreground" />
+              <h3 className="mt-3 font-serif text-xl font-bold text-foreground">Nenhum pet disponível no momento</h3>
+              <p className="mt-1 text-sm text-muted-foreground">O questionário foi concluído, mas não há animais disponíveis para ranquear. Volte ao catálogo mais tarde.</p>
+              <Link href="/pets" className="mt-4 inline-flex min-h-[44px] items-center justify-center rounded-full border border-border px-5 text-sm font-semibold text-foreground hover:bg-muted">Ver catálogo</Link>
+            </div>
+          )}
 
           {/* Results List */}
           <div className="space-y-6">
@@ -268,12 +342,12 @@ export function SmartMatchView() {
                   }`}
                 >
                   {/* Photo with rank badge */}
-                  <div className="relative w-full h-56 sm:h-64 lg:w-48 lg:h-48 rounded-2xl overflow-hidden shrink-0 bg-secondary">
+                  <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl bg-secondary lg:aspect-square lg:w-1/4 lg:max-w-56 lg:shrink-0">
                     <Image
                       src={pet.photos[0]}
                       alt={pet.name}
                       fill
-                      sizes="(max-width: 1024px) 100vw, 192px"
+                      sizes="(max-width: 1024px) 100vw, 25vw"
                       className="object-cover"
                     />
                     <div className="absolute top-3 left-3 bg-black/70 backdrop-blur-md text-white text-xs font-bold px-2.5 py-1 rounded-full">
@@ -296,13 +370,21 @@ export function SmartMatchView() {
                       {/* Match Score Badge */}
                       <div className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
                         <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                        <span className="font-bold text-base sm:text-lg">{result.score}% Match</span>
+                        <span className="font-bold text-base sm:text-lg">Índice {result.score}/100</span>
                       </div>
                     </div>
 
-                    {/* Matched Reasons */}
+                    {/* Fatores determinísticos e contextualização opcional por IA */}
+                    {result.resumoIa && (
+                      <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs leading-relaxed text-foreground">
+                        <p className="font-bold">Contexto adicional da IA</p>
+                        <p>{result.resumoIa}</p>
+                        {result.motivosIa && result.motivosIa.length > 0 && <ul className="list-inside list-disc space-y-1 text-muted-foreground">{result.motivosIa.map((motivo) => <li key={motivo}>{motivo}</li>)}</ul>}
+                        {result.cuidadosIa && result.cuidadosIa.length > 0 && <p className="text-muted-foreground"><strong className="text-foreground">Cuidados sugeridos:</strong> {result.cuidadosIa.join(" ")}</p>}
+                      </div>
+                    )}
                     <div className="space-y-1 text-xs">
-                      <span className="font-bold text-foreground block">Por que vocês combinam:</span>
+                      <span className="font-bold text-foreground block">Fatores usados no índice:</span>
                       <ul className="space-y-1 text-muted-foreground">
                         {result.matchedReasons.map((reason, idx) => (
                           <li key={idx} className="flex items-center gap-2">

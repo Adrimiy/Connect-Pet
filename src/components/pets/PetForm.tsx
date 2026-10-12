@@ -32,6 +32,10 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
   const [sex, setSex] = useState<"male" | "female">(initialData?.sex || "male");
   const [status, setStatus] = useState(initialData?.status || "available");
   const [ageCategory, setAgeCategory] = useState(initialData?.ageCategory || "young");
+  const [energyLevel, setEnergyLevel] = useState<Pet["energyLevel"]>(initialData?.energyLevel || "moderate");
+  const [compatibleWithChildren, setCompatibleWithChildren] = useState<Pet["compatibleWithChildren"]>(initialData?.compatibleWithChildren || "unknown");
+  const [compatibleWithDogs, setCompatibleWithDogs] = useState<Pet["compatibleWithDogs"]>(initialData?.compatibleWithDogs || "unknown");
+  const [compatibleWithCats, setCompatibleWithCats] = useState<Pet["compatibleWithCats"]>(initialData?.compatibleWithCats || "unknown");
   const [story, setStory] = useState(initialData?.story || "");
   const [headline, setHeadline] = useState(initialData?.headline || "");
   const [temperament, setTemperament] = useState(initialData?.temperament?.join(", ") || "");
@@ -88,6 +92,10 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
         size,
         approximateAge: approximateAge.trim(),
         ageCategory,
+        energyLevel,
+        compatibleWithChildren,
+        compatibleWithDogs,
+        compatibleWithCats,
         sex,
         status,
         story: story.trim(),
@@ -120,6 +128,10 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
         size,
         approximateAge: approximateAge.trim(),
         ageCategory,
+        energyLevel,
+        compatibleWithChildren,
+        compatibleWithDogs,
+        compatibleWithCats,
         sex,
         status: "available",
         vaccinated,
@@ -257,6 +269,41 @@ export function PetForm({ initialData, isEditing = false }: PetFormProps) {
           <div className="space-y-1">
             <Label>Idade Aproximada *</Label>
             <Input required maxLength={30} value={approximateAge} onChange={(e) => setApproximateAge(e.target.value)} />
+          </div>
+
+          <div className="space-y-3 rounded-xl border border-border bg-secondary/30 p-4">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Perfil para recomendações</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Informe somente comportamentos já observados. Quando não souber, mantenha “Ainda não avaliado”.</p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Nível de energia</Label>
+                <select value={energyLevel} onChange={(e) => setEnergyLevel(e.target.value as Pet["energyLevel"])} className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm">
+                  <option value="calm">Calmo</option>
+                  <option value="moderate">Moderado</option>
+                  <option value="high">Alto</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>Convivência com crianças</Label>
+                <select value={compatibleWithChildren} onChange={(e) => setCompatibleWithChildren(e.target.value as Pet["compatibleWithChildren"])} className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm">
+                  <option value="unknown">Ainda não avaliado</option><option value="yes">Convive bem</option><option value="no">Não é recomendado</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>Convivência com cães</Label>
+                <select value={compatibleWithDogs} onChange={(e) => setCompatibleWithDogs(e.target.value as Pet["compatibleWithDogs"])} className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm">
+                  <option value="unknown">Ainda não avaliado</option><option value="yes">Convive bem</option><option value="no">Não é recomendado</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>Convivência com gatos</Label>
+                <select value={compatibleWithCats} onChange={(e) => setCompatibleWithCats(e.target.value as Pet["compatibleWithCats"])} className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm">
+                  <option value="unknown">Ainda não avaliado</option><option value="yes">Convive bem</option><option value="no">Não é recomendado</option>
+                </select>
+              </div>
+            </div>
           </div>
 
           <div className="space-y-1">

@@ -871,7 +871,7 @@ function ProfileForm({ user }: { user: CurrentUser }) {
 
                 <div className="sm:col-span-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="desc" className="text-xs font-bold text-foreground">Apresentação / Missão da ONG</Label>
+                    <Label htmlFor="desc" className="text-xs font-bold text-foreground">Apresentação / Missão da ONG <span className="font-normal text-muted-foreground">(exibida na página dos seus animais)</span></Label>
                     <span className="text-[11px] text-muted-foreground">{bio.length}/500 caracteres</span>
                   </div>
                   <Textarea

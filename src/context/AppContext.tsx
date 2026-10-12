@@ -19,6 +19,11 @@ import { createClient } from '@/lib/client';
 import { removerFotosDoStorage } from '@/lib/petPhotos';
 import { normalizarFotosPet, obterUrlImagemPermitida } from '@/lib/origensImagem';
 import type { AuthFeature, AuthPromptState } from '@/components/auth/auth-features';
+import {
+  avaliarCandidaturaDeterministica,
+  calcularCompatibilidadeDeterministica,
+  type PetParaAvaliacao
+} from '../../supabase/functions/_shared/avaliacao';
 
 export interface ToastItem {
   id: string;
@@ -70,6 +75,7 @@ interface AppContextType {
   updateApplicationStatus: (appId: string, status: ApplicationStatus) => Promise<boolean>;
   updateGuardianNotes: (appId: string, notes: string) => Promise<boolean>;
   sendApplicationMessage: (appId: string, content: string) => Promise<boolean>;
+  generateApplicationAIAnalysis: (appId: string) => Promise<boolean>;
 
   // Toasts
   toasts: ToastItem[];
@@ -81,6 +87,7 @@ interface AppContextType {
   isAgeAllowed: (birthDate: string) => boolean;
   analyzeDossier: (app: Partial<PreAdoptionApplication>) => NonNullable<PreAdoptionApplication['automatedAnalysis']>;
   calculateSmartMatch: (quiz: SmartMatchQuizData, pet: Pet) => MatchResult;
+  enrichSmartMatchWithAI: (quiz: SmartMatchQuizData, results: MatchResult[]) => Promise<MatchResult[]>;
 }
 
 const STORAGE_KEYS = {
@@ -130,6 +137,10 @@ function normalizePet(raw: unknown): Pet {
     size: rawObj.size === "small" || rawObj.size === "Pequeno" ? "small" : rawObj.size === "large" || rawObj.size === "Grande" ? "large" : "medium",
     approximateAge: String(rawObj.approximateAge || rawObj.age || "Não informada"),
     ageCategory: (rawObj.ageCategory as Pet['ageCategory']) || "young",
+    energyLevel: (rawObj.energyLevel as Pet['energyLevel']) || "moderate",
+    compatibleWithChildren: (rawObj.compatibleWithChildren as Pet['compatibleWithChildren']) || "unknown",
+    compatibleWithDogs: (rawObj.compatibleWithDogs as Pet['compatibleWithDogs']) || "unknown",
+    compatibleWithCats: (rawObj.compatibleWithCats as Pet['compatibleWithCats']) || "unknown",
     sex: rawObj.sex === "female" || rawObj.gender === "Fêmea" ? "female" : "male",
     status: rawObj.status === "adopted" || rawObj.status === "Adotado" ? "adopted" : rawObj.status === "in_process" || rawObj.status === "Em processo" ? "in_process" : "available",
     vaccinated: !!rawObj.vaccinated,
@@ -161,6 +172,10 @@ function mapearPetDoBanco(pet: Record<string, unknown>): Pet {
     size: pet.size,
     approximateAge: pet.approximate_age,
     ageCategory: pet.age_category,
+    energyLevel: pet.energy_level,
+    compatibleWithChildren: pet.compatible_with_children,
+    compatibleWithDogs: pet.compatible_with_dogs,
+    compatibleWithCats: pet.compatible_with_cats,
     sex: pet.sex,
     status: pet.status,
     vaccinated: pet.vaccinated,
@@ -185,6 +200,55 @@ function mapearPetDoBanco(pet: Record<string, unknown>): Pet {
     },
     createdAt: pet.created_at
   });
+}
+
+type AnaliseAutomatica = NonNullable<PreAdoptionApplication['automatedAnalysis']>;
+
+function ehRegistro(valor: unknown): valor is Record<string, unknown> {
+  return Boolean(valor) && typeof valor === 'object' && !Array.isArray(valor);
+}
+
+function listaDeTextos(valor: unknown, limite: number): string[] {
+  if (!Array.isArray(valor)) return [];
+  return valor
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map((item) => item.trim().slice(0, 700))
+    .slice(0, limite);
+}
+
+function normalizarAnaliseIa(valor: unknown, baseLocal: AnaliseAutomatica): AnaliseAutomatica {
+  if (!ehRegistro(valor) || valor.origem !== 'ia' || typeof valor.resumo !== 'string'
+    || typeof valor.justificativa !== 'string' || typeof valor.verdict !== 'string') return baseLocal;
+
+  const fatores = Array.isArray(baseLocal.fatores) ? baseLocal.fatores : [];
+  return {
+    ...baseLocal,
+    resumo: valor.resumo.trim().slice(0, 500) || baseLocal.resumo,
+    justificativa: valor.justificativa.trim().slice(0, 700) || baseLocal.justificativa,
+    strengths: listaDeTextos(valor.strengths, 7).length > 0 ? listaDeTextos(valor.strengths, 7) : baseLocal.strengths,
+    attentionPoints: listaDeTextos(valor.attentionPoints, 7).length > 0 ? listaDeTextos(valor.attentionPoints, 7) : baseLocal.attentionPoints,
+    suggestedQuestions: listaDeTextos(valor.suggestedQuestions, 6).length > 0 ? listaDeTextos(valor.suggestedQuestions, 6) : baseLocal.suggestedQuestions,
+    fatores,
+    origem: 'ia',
+    versao: typeof valor.versao === 'string' ? valor.versao.slice(0, 80) : baseLocal.versao,
+    geradoEm: typeof valor.geradoEm === 'string' && !Number.isNaN(Date.parse(valor.geradoEm)) ? valor.geradoEm : baseLocal.geradoEm,
+    provedor: typeof valor.provedor === 'string' ? valor.provedor.slice(0, 80) : 'GroqCloud',
+    modelo: typeof valor.modelo === 'string' ? valor.modelo.slice(0, 120) : undefined
+  };
+}
+
+async function obterDetalheErroFuncao(erro: unknown): Promise<string> {
+  if (!ehRegistro(erro)) return 'Falha de comunicação com a função de IA.';
+  const contexto = erro.context;
+  if (contexto instanceof Response) {
+    try {
+      const corpo = await contexto.clone().json() as { erro?: unknown };
+      if (typeof corpo.erro === 'string' && corpo.erro.trim()) return corpo.erro.trim();
+    } catch {
+      // A mensagem padrão abaixo cobre respostas sem JSON.
+    }
+  }
+  return typeof erro.message === 'string' ? erro.message : 'Falha de comunicação com a função de IA.';
 }
 
 function cleanAvatar(val: unknown): string | undefined {
@@ -233,6 +297,7 @@ async function fetchUserProfile(supabaseClient: ReturnType<typeof createClient>,
           neighborhood: profile.neighborhood || '',
           description: profile.description || undefined,
           bio: profile.bio || undefined,
+          socialMedia: profile.social_media || undefined,
           verified: profile.verified ?? false,
           avatar: resolvedAvatar
         };
@@ -504,7 +569,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // sem truncar os totais usados pelos indicadores do painel.
         let consultaCandidaturas = supabase
           .from('applications')
-          .select('id, pet_id, candidate_name, candidate_email, candidate_phone, guardian_id, status, candidate, housing, routine, finance, dossier, automated_analysis, guardian_notes, created_at, pet_name, pet_photo, pet_species, guardian_name, guardian_type, candidate_id, pets(id, name, photos, species), application_messages(id, sender_name, sender_role, message, created_at)')
+          .select('id, pet_id, candidate_name, candidate_email, candidate_phone, guardian_id, status, candidate, housing, routine, finance, automated_analysis, guardian_notes, created_at, pet_name, pet_photo, pet_species, guardian_name, guardian_type, candidate_id, pets(id, name, photos, species, size, age_category, energy_level, compatible_with_children, compatible_with_dogs, compatible_with_cats, temperament, special_needs), application_messages(id, sender_name, sender_role, message, created_at)')
           .order('created_at', { ascending: false });
 
         if (currentUser.role === 'guardian') {
@@ -525,8 +590,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             const housing = (a.housing || {}) as Record<string, unknown>;
             const routine = (a.routine || {}) as Record<string, unknown>;
             const finance = (a.finance || {}) as Record<string, unknown>;
-            const dossier = (a.dossier || {}) as Record<string, unknown>;
-
             const petObj = (a.pets && typeof a.pets === 'object' ? a.pets : null) as Record<string, unknown> | null;
             const petPhotos = petObj && Array.isArray(petObj.photos) ? (petObj.photos as string[]) : [];
             const petPhoto = normalizarFotosPet(
@@ -551,7 +614,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 ? (a.messages as PreAdoptionApplication['messages'])
                 : [];
 
-            return {
+            const candidaturaMapeada: PreAdoptionApplication = {
               id: String(a.id),
               petId: String(a.pet_id || ''),
               petName,
@@ -583,8 +646,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               allergyCases: !!routine.allergyCases,
               allergyDetails: String(routine.allergyDetails || ''),
               hoursAlone: typeof routine.hoursAlone === 'number' ? routine.hoursAlone : 0,
+              dailyCarePlan: String(routine.dailyCarePlan || ''),
               travelCarePlan: String(routine.travelCarePlan || ''),
               hasCurrentPets: !!routine.hasCurrentPets,
+              currentPetsDescription: String(routine.currentPetsDescription || ''),
               currentPetsDetails: Array.isArray(routine.currentPetsDetails) ? (routine.currentPetsDetails as PreAdoptionApplication['currentPetsDetails']) : undefined,
               previousPetsHistory: String(routine.previousPetsHistory || ''),
               costAwareness: !!finance.costAwareness,
@@ -592,15 +657,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               createdAt: String(a.created_at || new Date().toISOString()),
               notes: Array.isArray(a.notes) ? (a.notes as string[]) : [],
               guardianNotes: String(a.guardian_notes || ''),
-              messages: rawMessages,
-              automatedAnalysis: (dossier.automatedAnalysis || a.automated_analysis || {
-                suitabilityScore: 0,
-                verdict: 'Análise indisponível',
-                strengths: [],
-                attentionPoints: [],
-                suggestedQuestions: []
-              }) as NonNullable<PreAdoptionApplication['automatedAnalysis']>
+              messages: rawMessages
             };
+
+            const petParaAvaliacao: PetParaAvaliacao | null = petObj ? {
+              id: String(petObj.id || candidaturaMapeada.petId),
+              name: petName,
+              species: petSpecies,
+              size: petObj.size === 'large' ? 'large' : petObj.size === 'small' ? 'small' : 'medium',
+              ageCategory: ['puppy', 'young', 'adult', 'senior'].includes(String(petObj.age_category))
+                ? petObj.age_category as PetParaAvaliacao['ageCategory']
+                : 'adult',
+              energyLevel: ['calm', 'moderate', 'high'].includes(String(petObj.energy_level)) ? petObj.energy_level as PetParaAvaliacao['energyLevel'] : 'moderate',
+              compatibleWithChildren: ['yes', 'no'].includes(String(petObj.compatible_with_children)) ? petObj.compatible_with_children as PetParaAvaliacao['compatibleWithChildren'] : 'unknown',
+              compatibleWithDogs: ['yes', 'no'].includes(String(petObj.compatible_with_dogs)) ? petObj.compatible_with_dogs as PetParaAvaliacao['compatibleWithDogs'] : 'unknown',
+              compatibleWithCats: ['yes', 'no'].includes(String(petObj.compatible_with_cats)) ? petObj.compatible_with_cats as PetParaAvaliacao['compatibleWithCats'] : 'unknown',
+              temperament: listaDeTextos(petObj.temperament, 12),
+              specialNeeds: typeof petObj.special_needs === 'string' ? petObj.special_needs : undefined
+            } : null;
+            const baseLocal = avaliarCandidaturaDeterministica(candidaturaMapeada, petParaAvaliacao);
+            candidaturaMapeada.automatedAnalysis = normalizarAnaliseIa(a.automated_analysis, baseLocal);
+            return candidaturaMapeada;
           });
 
           setApplicationsState(mappedApps);
@@ -810,6 +887,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               size: newPetData.size,
               approximate_age: newPetData.approximateAge,
               age_category: newPetData.ageCategory,
+              energy_level: newPetData.energyLevel,
+              compatible_with_children: newPetData.compatibleWithChildren,
+              compatible_with_dogs: newPetData.compatibleWithDogs,
+              compatible_with_cats: newPetData.compatibleWithCats,
               sex: newPetData.sex,
               status: newPetData.status,
               vaccinated: newPetData.vaccinated,
@@ -867,6 +948,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (updates.size !== undefined) remoteUpdates.size = updates.size;
           if (updates.approximateAge !== undefined) remoteUpdates.approximate_age = updates.approximateAge;
           if (updates.ageCategory !== undefined) remoteUpdates.age_category = updates.ageCategory;
+          if (updates.energyLevel !== undefined) remoteUpdates.energy_level = updates.energyLevel;
+          if (updates.compatibleWithChildren !== undefined) remoteUpdates.compatible_with_children = updates.compatibleWithChildren;
+          if (updates.compatibleWithDogs !== undefined) remoteUpdates.compatible_with_dogs = updates.compatibleWithDogs;
+          if (updates.compatibleWithCats !== undefined) remoteUpdates.compatible_with_cats = updates.compatibleWithCats;
           if (updates.sex !== undefined) remoteUpdates.sex = updates.sex;
           if (updates.status !== undefined) remoteUpdates.status = updates.status;
           if (updates.story !== undefined) remoteUpdates.story = updates.story;
@@ -1026,8 +1111,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return calculateAge(birthDate) >= 21;
   }, [calculateAge]);
 
-  // Deterministic Dossier Analysis Engine
-  const analyzeDossier = useCallback((app: Partial<PreAdoptionApplication>): NonNullable<PreAdoptionApplication['automatedAnalysis']> => {
+  // Motor legado mantido apenas como fallback defensivo para dados antigos inesperados.
+  const analisarDossieLegado = useCallback((app: Partial<PreAdoptionApplication>): NonNullable<PreAdoptionApplication['automatedAnalysis']> => {
     let score = 70;
     const strengths: string[] = [];
     const attentionPoints: string[] = [];
@@ -1151,12 +1236,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       verdict,
       strengths,
       attentionPoints,
-      suggestedQuestions: suggestedQuestions.slice(0, 3)
+      suggestedQuestions: suggestedQuestions.slice(0, 3),
+      resumo: `${verdict}. Esta é uma referência inicial baseada nas respostas declaradas.`,
+      justificativa: 'A pontuação foi calculada por critérios locais e deve ser validada pelo responsável em entrevista.',
+      origem: 'local',
+      versao: 'connectpet-local-v1',
+      geradoEm: new Date().toISOString()
     };
   }, [calculateAge]);
 
-  // Deterministic SmartMatch Algorithm
-  const calculateSmartMatch = useCallback((quiz: SmartMatchQuizData, pet: Pet): MatchResult => {
+  const analyzeDossier = useCallback((app: Partial<PreAdoptionApplication>): NonNullable<PreAdoptionApplication['automatedAnalysis']> => {
+    try {
+      const petRelacionado = pets.find((pet) => pet.id === app.petId);
+      return avaliarCandidaturaDeterministica(app, petRelacionado || null);
+    } catch (erro) {
+      console.warn('A avaliação auditável não pôde ser calculada; usando o motor local de compatibilidade:', erro);
+      return analisarDossieLegado(app);
+    }
+  }, [analisarDossieLegado, pets]);
+
+  // Motor anterior preservado como fallback para registros legados fora do contrato atual.
+  const calcularSmartMatchLegado = useCallback((quiz: SmartMatchQuizData, pet: Pet): MatchResult => {
     let score = 75;
     const matchedReasons: string[] = [];
     const adaptationTips: string[] = [];
@@ -1204,7 +1304,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Energy & Hours alone
-    if (quiz.hoursAlone > 6) {
+    if ((quiz.hoursAlone ?? 4) > 6) {
       if (pet.ageCategory === 'senior' || pet.temperament.includes('Calma') || pet.temperament.includes('Tranquilo')) {
         score += 12;
         matchedReasons.push('Temperamento tranquilo e maduro, lida melhor com períodos de tranquilidade na casa.');
@@ -1246,6 +1346,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       matchedReasons.push('Ideal para rotinas tranquilas e momentos relaxantes.');
     }
 
+    // Disponibilidade real para atividades
+    const petAtivo = pet.ageCategory === 'puppy' || pet.temperament.some((item) =>
+      ['brincalhão', 'brincalhao', 'ativo', 'enérgico', 'energico'].some((termo) => item.toLocaleLowerCase('pt-BR').includes(termo))
+    );
+    if (quiz.activityAvailability === 'high' && petAtivo) {
+      score += 10;
+      matchedReasons.push('Sua disponibilidade para atividades acompanha a energia deste pet.');
+    } else if (quiz.activityAvailability === 'low' && petAtivo) {
+      score -= 14;
+      adaptationTips.push('A rotina precisará incluir mais passeios ou brincadeiras para atender à energia deste pet.');
+    }
+
+    // Experiência, preparo financeiro e rede de cuidado
+    if (quiz.experienceLevel === 'experienced') {
+      score += pet.specialNeeds ? 8 : 4;
+      matchedReasons.push('Sua experiência anterior pode facilitar a adaptação e os cuidados diários.');
+    } else if (quiz.experienceLevel === 'first_pet' && (pet.ageCategory === 'puppy' || !!pet.specialNeeds)) {
+      score -= 8;
+      adaptationTips.push('Por ser seu primeiro pet, planeje apoio próximo da ONG e de profissionais nas primeiras semanas.');
+    }
+
+    if (quiz.financialPreparedness === 'planned') {
+      score += 10;
+      matchedReasons.push('Você informou planejamento para custos recorrentes e veterinários.');
+    } else if (quiz.financialPreparedness === 'not_planned') {
+      score -= 18;
+      adaptationTips.push('Antes de adotar, organize um orçamento para alimentação, prevenção e emergências veterinárias.');
+    }
+
+    if (quiz.absenceCarePlan === 'defined') {
+      score += 7;
+      matchedReasons.push('Há um plano definido para viagens e imprevistos.');
+    } else if (quiz.absenceCarePlan === 'not_defined') {
+      score -= 10;
+      adaptationTips.push('Defina quem cuidará do pet durante viagens ou imprevistos.');
+    }
+
+    if (!quiz.hasProtection && !quiz.willingToAdaptHome) {
+      score -= 15;
+      adaptationTips.push('A segurança do ambiente precisa ser revista antes da adoção.');
+    } else if (!quiz.hasProtection && quiz.willingToAdaptHome) {
+      score += 3;
+      matchedReasons.push('Você demonstrou disposição para adaptar a segurança da moradia.');
+    }
+
+    if (quiz.hasAllergies) {
+      score -= 7;
+      adaptationTips.push('Converse com um profissional de saúde sobre a alergia antes de avançar na adoção.');
+    }
+
     const finalScore = Math.min(99, Math.max(35, score));
     const level = finalScore >= 80 ? 'high' : finalScore >= 65 ? 'medium' : 'moderate';
 
@@ -1257,10 +1407,101 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       pet,
       score: finalScore,
       compatibilityLevel: level,
-      matchedReasons: matchedReasons.slice(0, 3),
-      adaptationTips: adaptationTips.slice(0, 2)
+      matchedReasons: matchedReasons.slice(0, 4),
+      adaptationTips: adaptationTips.slice(0, 3),
+      origemAnalise: 'local'
     };
   }, []);
+
+  const calculateSmartMatch = useCallback((quiz: SmartMatchQuizData, pet: Pet): MatchResult => {
+    try {
+      return { pet, ...calcularCompatibilidadeDeterministica(quiz, pet) };
+    } catch (erro) {
+      console.warn('A compatibilidade auditável não pôde ser calculada; usando o motor local anterior:', erro);
+      return calcularSmartMatchLegado(quiz, pet);
+    }
+  }, [calcularSmartMatchLegado]);
+
+  const enrichSmartMatchWithAI = useCallback(async (quiz: SmartMatchQuizData, results: MatchResult[]): Promise<MatchResult[]> => {
+    if (!supabase || !currentUser || results.length === 0) return results;
+
+    try {
+      const principaisResultados = results.slice(0, 3);
+      const { data, error } = await supabase.functions.invoke('analisar-compatibilidade', {
+        body: {
+          tipo: 'smart_match',
+          questionario: quiz,
+          petIds: principaisResultados.map(({ pet }) => pet.id)
+        }
+      });
+
+      if (error || !ehRegistro(data) || !Array.isArray(data.recomendacoes)) {
+        console.warn('A contextualização do Smart Match por IA não está disponível:', await obterDetalheErroFuncao(error));
+        return results;
+      }
+
+      const recomendacoes = new Map<string, Record<string, unknown>>();
+      data.recomendacoes.forEach((item) => {
+        if (ehRegistro(item) && typeof item.petId === 'string') recomendacoes.set(item.petId, item);
+      });
+
+      return results.map((resultado) => {
+        const recomendacao = recomendacoes.get(resultado.pet.id);
+        if (!recomendacao || typeof recomendacao.resumo !== 'string') return resultado;
+        const resumoIa = recomendacao.resumo.trim().slice(0, 420);
+        if (!resumoIa) return resultado;
+        return {
+          ...resultado,
+          resumoIa,
+          motivosIa: listaDeTextos(recomendacao.motivos, 3),
+          cuidadosIa: listaDeTextos(recomendacao.cuidados, 3),
+          origemAnalise: 'ia'
+        };
+      });
+    } catch (erro) {
+      console.warn('A contextualização do Smart Match por IA falhou:', erro);
+      return results;
+    }
+  }, [currentUser, supabase]);
+
+  const generateApplicationAIAnalysis = useCallback(async (appId: string): Promise<boolean> => {
+    if (!supabase || currentUser?.role !== 'guardian') return false;
+
+    try {
+      const { data, error } = await supabase.functions.invoke('analisar-compatibilidade', {
+        body: { tipo: 'candidatura', candidaturaId: appId }
+      });
+      const candidaturaAtual = applications.find((candidatura) => candidatura.id === appId);
+      const baseLocal = candidaturaAtual?.automatedAnalysis;
+
+      if (error || !ehRegistro(data) || !baseLocal) {
+        const detalhe = await obterDetalheErroFuncao(error);
+        console.warn('Não foi possível gerar a análise contextual da candidatura:', detalhe);
+        showToast('Análise com IA indisponível', detalhe, 'warning');
+        return false;
+      }
+
+      const analise = normalizarAnaliseIa(data.analise, { ...baseLocal, origem: 'local' });
+      if (analise.origem !== 'ia') {
+        showToast('Resposta da IA inválida', 'A análise local foi preservada. Tente novamente mais tarde.', 'warning');
+        return false;
+      }
+
+      setApplicationsState((anteriores) => anteriores.map((candidatura) =>
+        candidatura.id === appId ? { ...candidatura, automatedAnalysis: analise } : candidatura
+      ));
+      showToast('Análise contextual atualizada', 'A IA organizou justificativas e perguntas sem alterar a decisão humana.', 'success');
+      return true;
+    } catch (erro) {
+      console.warn('Não foi possível gerar a análise contextual da candidatura:', erro);
+      showToast(
+        'Análise com IA indisponível',
+        'A pontuação local continua válida. Verifique sua conexão e tente novamente.',
+        'warning'
+      );
+      return false;
+    }
+  }, [applications, currentUser, showToast, supabase]);
 
   // Applications
   const submitApplication = useCallback(async (data: Omit<PreAdoptionApplication, 'id' | 'createdAt' | 'status' | 'notes' | 'messages' | 'automatedAnalysis'>): Promise<PreAdoptionApplication | null> => {
@@ -1323,21 +1564,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 adultsCount: data.adultsCount,
                 childrenCount: data.childrenCount,
                 hoursAlone: data.hoursAlone,
+                dailyCarePlan: data.dailyCarePlan,
                 familyAgreement: data.familyAgreement,
                 allergyCases: data.allergyCases,
                 allergyDetails: data.allergyDetails,
                 travelCarePlan: data.travelCarePlan,
                 hasCurrentPets: data.hasCurrentPets,
+                currentPetsDescription: data.currentPetsDescription,
                 currentPetsDetails: data.currentPetsDetails,
                 previousPetsHistory: data.previousPetsHistory
               },
               finance: {
                 costAwareness: data.costAwareness
-              },
-              dossier: {
-                automatedAnalysis: analysis
-              },
-              automated_analysis: analysis
+              }
             })
             .select('id, created_at')
             .single();
@@ -1540,6 +1779,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateApplicationStatus,
     updateGuardianNotes,
     sendApplicationMessage,
+    generateApplicationAIAnalysis,
     toasts,
     showToast,
     removeToast,
@@ -1547,6 +1787,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isAgeAllowed,
     analyzeDossier,
     calculateSmartMatch,
+    enrichSmartMatchWithAI,
   }), [
     theme,
     setTheme,
@@ -1577,6 +1818,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateApplicationStatus,
     updateGuardianNotes,
     sendApplicationMessage,
+    generateApplicationAIAnalysis,
     toasts,
     showToast,
     removeToast,
@@ -1584,6 +1826,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isAgeAllowed,
     analyzeDossier,
     calculateSmartMatch,
+    enrichSmartMatchWithAI,
   ]);
 
   return <AppContext.Provider value={contextValue}>{children}</AppContext.Provider>;

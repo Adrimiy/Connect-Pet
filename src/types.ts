@@ -3,6 +3,8 @@ export type GuardianType = 'individual' | 'ngo';
 export type PetSpecies = 'dog' | 'cat';
 export type PetSize = 'small' | 'medium' | 'large';
 export type PetAgeCategory = 'puppy' | 'young' | 'adult' | 'senior';
+export type PetEnergyLevel = 'calm' | 'moderate' | 'high';
+export type PetCompatibility = 'yes' | 'no' | 'unknown';
 export type PetSex = 'male' | 'female';
 export type PetAdoptionStatus = 'available' | 'in_process' | 'adopted';
 export type ApplicationStatus = 'pending' | 'under_review' | 'approved' | 'rejected' | 'completed';
@@ -67,6 +69,10 @@ export interface Pet {
   size: PetSize;
   approximateAge: string;
   ageCategory: PetAgeCategory;
+  energyLevel: PetEnergyLevel;
+  compatibleWithChildren: PetCompatibility;
+  compatibleWithDogs: PetCompatibility;
+  compatibleWithCats: PetCompatibility;
   sex: PetSex;
   status: PetAdoptionStatus;
   vaccinated: boolean;
@@ -142,9 +148,11 @@ export interface PreAdoptionApplication {
   allergyCases: boolean;
   allergyDetails?: string;
   hoursAlone: number;
+  dailyCarePlan: string;
   travelCarePlan: string;
   // 3. Pets e Finanças
   hasCurrentPets: boolean;
+  currentPetsDescription?: string;
   currentPetsDetails?: CurrentPetDetail[];
   previousPetsHistory: string;
   costAwareness: boolean;
@@ -161,18 +169,41 @@ export interface PreAdoptionApplication {
     strengths: string[];
     attentionPoints: string[];
     suggestedQuestions: string[];
+    resumo?: string;
+    justificativa?: string;
+    origem?: 'local' | 'ia';
+    versao?: string;
+    geradoEm?: string;
+    provedor?: string;
+    modelo?: string;
+    fatores?: Array<{
+      criterio: string;
+      impacto: number;
+      explicacao: string;
+    }>;
   };
 }
 
 export interface SmartMatchQuizData {
-  housingType: 'casa' | 'apartamento' | 'sobrado' | 'sitio';
-  hasProtection: boolean;
-  hoursAlone: number;
-  hasChildren: boolean;
-  hasOtherPets: boolean;
   preferredSpecies: 'all' | 'dog' | 'cat';
   preferredSize: 'all' | 'small' | 'medium' | 'large';
-  energyLevel: 'calm' | 'moderate' | 'high';
+  preferredAge: 'all' | PetAgeCategory;
+  preferredEnergy: 'all' | PetEnergyLevel;
+  hasChildren: boolean;
+  residentPets: 'none' | 'dog' | 'cat' | 'both';
+  acceptsSpecialNeeds: boolean;
+  /** Campos legados aceitos apenas pelo fallback local de registros antigos. */
+  housingType?: 'casa' | 'apartamento' | 'sobrado' | 'sitio';
+  hasProtection?: boolean;
+  hoursAlone?: number;
+  hasOtherPets?: boolean;
+  energyLevel?: 'calm' | 'moderate' | 'high';
+  activityAvailability?: 'low' | 'moderate' | 'high';
+  experienceLevel?: 'first_pet' | 'some_experience' | 'experienced';
+  financialPreparedness?: 'planned' | 'partial' | 'not_planned';
+  absenceCarePlan?: 'defined' | 'support_network' | 'not_defined';
+  willingToAdaptHome?: boolean;
+  hasAllergies?: boolean;
 }
 
 export interface MatchResult {
@@ -181,4 +212,8 @@ export interface MatchResult {
   compatibilityLevel: 'high' | 'medium' | 'moderate';
   matchedReasons: string[];
   adaptationTips: string[];
+  resumoIa?: string;
+  motivosIa?: string[];
+  cuidadosIa?: string[];
+  origemAnalise?: 'local' | 'ia';
 }

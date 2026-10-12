@@ -14,6 +14,10 @@ create table if not exists public.pets (
   size text not null check (size in ('small', 'medium', 'large')),
   approximate_age text not null,
   age_category text not null check (age_category in ('puppy', 'young', 'adult', 'senior')),
+  energy_level text not null default 'moderate' check (energy_level in ('calm', 'moderate', 'high')),
+  compatible_with_children text not null default 'unknown' check (compatible_with_children in ('yes', 'no', 'unknown')),
+  compatible_with_dogs text not null default 'unknown' check (compatible_with_dogs in ('yes', 'no', 'unknown')),
+  compatible_with_cats text not null default 'unknown' check (compatible_with_cats in ('yes', 'no', 'unknown')),
   sex text not null check (sex in ('male', 'female')),
   status text not null default 'available' check (status in ('available', 'in_process', 'adopted')),
   vaccinated boolean not null default false,
@@ -63,7 +67,7 @@ create table if not exists public.applications (
   routine jsonb not null default '{}'::jsonb,
   finance jsonb not null default '{}'::jsonb,
   dossier jsonb not null default '{}'::jsonb,
-  automated_analysis jsonb not null default '{}'::jsonb,
+  automated_analysis jsonb,
   guardian_notes text default '',
   pet_name text,
   pet_photo text,
@@ -86,8 +90,32 @@ create index if not exists idx_applications_guardian_criado
 -- Garante compatibilidade com bancos criados antes da adoção dos campos de atualização.
 alter table public.pets
   add column if not exists updated_at timestamp with time zone not null default timezone('utc'::text, now());
+-- Campos objetivos e leves que dão base verificável às recomendações do Smart Match.
+alter table public.pets add column if not exists energy_level text not null default 'moderate';
+alter table public.pets add column if not exists compatible_with_children text not null default 'unknown';
+alter table public.pets add column if not exists compatible_with_dogs text not null default 'unknown';
+alter table public.pets add column if not exists compatible_with_cats text not null default 'unknown';
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'pets_energy_level_check' and conrelid = 'public.pets'::regclass) then
+    alter table public.pets add constraint pets_energy_level_check check (energy_level in ('calm', 'moderate', 'high'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'pets_compatible_with_children_check' and conrelid = 'public.pets'::regclass) then
+    alter table public.pets add constraint pets_compatible_with_children_check check (compatible_with_children in ('yes', 'no', 'unknown'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'pets_compatible_with_dogs_check' and conrelid = 'public.pets'::regclass) then
+    alter table public.pets add constraint pets_compatible_with_dogs_check check (compatible_with_dogs in ('yes', 'no', 'unknown'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'pets_compatible_with_cats_check' and conrelid = 'public.pets'::regclass) then
+    alter table public.pets add constraint pets_compatible_with_cats_check check (compatible_with_cats in ('yes', 'no', 'unknown'));
+  end if;
+end $$;
 alter table public.applications
   add column if not exists updated_at timestamp with time zone not null default timezone('utc'::text, now());
+alter table public.applications add column if not exists automated_analysis jsonb;
+alter table public.applications alter column automated_analysis drop not null;
+alter table public.applications alter column automated_analysis drop default;
 
 -- 4. Tabela de Mensagens da Candidatura (application_messages)
 create table if not exists public.application_messages (
@@ -174,12 +202,61 @@ create table if not exists public.favorites (
 create index if not exists idx_favorites_user_id on public.favorites (user_id);
 create index if not exists idx_favorites_pet_id on public.favorites (pet_id);
 
+-- 6.1 Controle de consumo da IA sem dependência externa paga.
+-- A tabela é acessível somente pela função server-side executada como service_role.
+create table if not exists public.ai_usage_limits (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  usage_date date not null default current_date,
+  usage_type text not null check (usage_type in ('smart_match', 'candidatura')),
+  request_count integer not null default 0 check (request_count >= 0),
+  updated_at timestamp with time zone not null default timezone('utc'::text, now()),
+  primary key (user_id, usage_date, usage_type)
+);
+
+create or replace function public.consumir_cota_ia(
+  p_usuario_id uuid,
+  p_tipo text,
+  p_limite_diario integer
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  nova_contagem integer;
+begin
+  if p_usuario_id is null
+    or p_tipo not in ('smart_match', 'candidatura')
+    or p_limite_diario < 1
+    or p_limite_diario > 100 then
+    return false;
+  end if;
+
+  insert into public.ai_usage_limits (user_id, usage_date, usage_type, request_count)
+  values (p_usuario_id, current_date, p_tipo, 1)
+  on conflict (user_id, usage_date, usage_type)
+  do update
+    set request_count = public.ai_usage_limits.request_count + 1,
+        updated_at = timezone('utc'::text, now())
+    where public.ai_usage_limits.request_count < p_limite_diario
+  returning request_count into nova_contagem;
+
+  return nova_contagem is not null;
+end;
+$$;
+
+revoke all on table public.ai_usage_limits from public, anon, authenticated;
+revoke all on function public.consumir_cota_ia(uuid, text, integer) from public, anon, authenticated;
+grant execute on function public.consumir_cota_ia(uuid, text, integer) to service_role;
+
 -- 7. Configuração de Row Level Security (RLS)
 alter table public.pets enable row level security;
 alter table public.applications enable row level security;
 alter table public.application_messages enable row level security;
 alter table public.profiles enable row level security;
 alter table public.favorites enable row level security;
+alter table public.ai_usage_limits enable row level security;
 
 -- Políticas para Pets (catálogo é público para leitura; gerenciamento por autenticados)
 drop policy if exists "Allow public read access for pets" on public.pets;
@@ -308,13 +385,11 @@ create policy "Allow candidate to insert application"
       lower(candidate_email) = lower((select auth.jwt() ->> 'email'))
       or (candidate ->> 'id') = (select auth.uid())::text
     )
-    and (
-      pet_id is null
-      or exists (
-        select 1 from public.pets p
-        where p.id = pet_id
-        and p.guardian_id = applications.guardian_id
-      )
+    and pet_id is not null
+    and exists (
+      select 1 from public.pets p
+      where p.id = pet_id
+      and p.guardian_id = applications.guardian_id
     )
   );
 
@@ -431,7 +506,7 @@ create policy "Pet photos: owner can read own files"
   to authenticated
   using (
     bucket_id = 'pet-photos'
-    and owner_id = (select auth.uid())
+    and owner_id = (select auth.uid())::text
   );
 
 drop policy if exists "Pet photos: owner can update own files" on storage.objects;
@@ -512,6 +587,9 @@ begin
   end if;
 
   new.candidate_id := coalesce(new.candidate_id, (select auth.uid())::text, new.candidate ->> 'id');
+  -- Resultados automáticos nunca são aceitos do navegador no cadastro.
+  new.automated_analysis := null;
+  new.dossier := coalesce(new.dossier, '{}'::jsonb) - 'automatedAnalysis';
   return new;
 end;
 $$;
@@ -521,7 +599,8 @@ create trigger trg_applications_preencher_dados
   before insert on public.applications
   for each row execute function public.applications_preencher_dados();
 
--- Depois de enviada, a candidatura só permite alterar o andamento e as notas da ONG.
+-- Depois de enviada, o navegador só pode alterar o andamento e as notas da ONG.
+-- A análise automática é persistida exclusivamente pela Edge Function após validar o responsável.
 -- Impede que um participante troque pet, candidato, responsável ou respostas do dossiê.
 create or replace function public.applications_proteger_dados_enviados()
 returns trigger
@@ -539,7 +618,11 @@ begin
   new.routine := old.routine;
   new.finance := old.finance;
   new.dossier := old.dossier;
-  new.automated_analysis := old.automated_analysis;
+  -- Somente a Edge Function, autenticada como service_role após validar o responsável,
+  -- pode persistir a análise contextual. Clientes não podem forjar o selo de IA.
+  if current_user <> 'service_role' then
+    new.automated_analysis := old.automated_analysis;
+  end if;
   new.created_at := old.created_at;
   new.pet_name := old.pet_name;
   new.pet_photo := old.pet_photo;
@@ -553,6 +636,11 @@ $$;
 
 -- Preenche as candidaturas já existentes
 drop trigger if exists trg_applications_proteger_dados_enviados on public.applications;
+
+-- Normaliza apenas o objeto vazio legado; análises reais já persistidas são preservadas.
+update public.applications
+  set automated_analysis = null
+  where automated_analysis = '{}'::jsonb;
 
 update public.applications a
   set pet_name = p.name,
@@ -919,7 +1007,7 @@ create policy "Avatars: proprietário lê os próprios arquivos"
   to authenticated
   using (
     bucket_id = 'avatars'
-    and owner_id = (select auth.uid())
+    and owner_id = (select auth.uid())::text
   );
 
 drop policy if exists "Avatars: proprietário remove os próprios arquivos" on storage.objects;
@@ -928,7 +1016,7 @@ create policy "Avatars: proprietário remove os próprios arquivos"
   to authenticated
   using (
     bucket_id = 'avatars'
-    and owner_id = (select auth.uid())
+    and owner_id = (select auth.uid())::text
   );
 
 -- Mantém os dados públicos do responsável sincronizados nos anúncios existentes.
@@ -958,5 +1046,56 @@ create trigger trg_sincronizar_perfil_guardiao_nos_pets
   for each row execute function public.sincronizar_perfil_guardiao_nos_pets();
 
 revoke execute on function public.sincronizar_perfil_guardiao_nos_pets() from public, anon, authenticated;
+revoke all on table public.ai_usage_limits from public, anon, authenticated;
+revoke all on function public.consumir_cota_ia(uuid, text, integer) from public, anon, authenticated;
+grant execute on function public.consumir_cota_ia(uuid, text, integer) to service_role;
 
+-- ==============================================================================
+-- 12. Perfil público do responsável (ONG / protetor)
+-- Expõe SOMENTE campos institucionais (sem CPF/CNPJ, e-mail ou telefone) para
+-- que a página do animal exiba a história/missão da ONG a visitantes.
+-- A tabela profiles continua protegida por RLS; apenas esta função é pública.
+-- ==============================================================================
+create or replace function public.obter_perfil_publico_guardiao(p_guardian_id text)
+returns table (
+  nome text,
+  tipo_guardiao text,
+  apresentacao text,
+  redes_sociais text,
+  avatar text,
+  verificado boolean,
+  cidade text,
+  estado text,
+  membro_desde timestamp with time zone,
+  total_animais_disponiveis bigint
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    p.name,
+    p.guardian_type,
+    nullif(btrim(p.bio), ''),
+    nullif(btrim(p.social_media), ''),
+    p.avatar,
+    coalesce(p.verified, false),
+    p.city,
+    p.state,
+    p.created_at,
+    (
+      select count(*)
+      from public.pets pt
+      where pt.guardian_id = p.id::text
+        and pt.status = 'available'
+    )
+  from public.profiles p
+  where p.id::text = p_guardian_id
+    and p.role = 'guardian'
+  limit 1;
+$$;
+
+revoke all on function public.obter_perfil_publico_guardiao(text) from public;
+grant execute on function public.obter_perfil_publico_guardiao(text) to anon, authenticated;
 

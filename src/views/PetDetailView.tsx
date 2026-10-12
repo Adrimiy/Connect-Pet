@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -9,6 +9,12 @@ import { useApp } from "@/context/AppContext";
 import { PreAdoptionModal } from "@/components/adoption/PreAdoptionModal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  montarLinkRedeSocial,
+  obterPerfilPublicoGuardiao,
+  PerfilPublicoGuardiao
+} from "@/lib/perfilPublicoGuardiao";
 import {
   Heart,
   ShieldCheck,
@@ -21,7 +27,10 @@ import {
   CheckCircle2,
   AlertCircle,
   MessageCircle,
-  Share2
+  Share2,
+  Globe,
+  CalendarHeart,
+  PawPrint
 } from "lucide-react";
 
 interface PetDetailViewProps {
@@ -34,6 +43,26 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
 
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState(0);
   const [isAdoptionModalOpen, setIsAdoptionModalOpen] = useState(false);
+  const [perfilGuardiao, setPerfilGuardiao] = useState<PerfilPublicoGuardiao | null>(null);
+  const [apresentacaoExpandida, setApresentacaoExpandida] = useState(false);
+
+  // Carrega a apresentação pública do responsável (história/missão, selo e redes)
+  useEffect(() => {
+    let cancelado = false;
+    obterPerfilPublicoGuardiao(pet.guardianId).then((perfil) => {
+      if (!cancelado) setPerfilGuardiao(perfil);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [pet.guardianId]);
+
+  const apresentacaoGuardiao = perfilGuardiao?.apresentacao ?? null;
+  const apresentacaoLonga = (apresentacaoGuardiao?.length ?? 0) > 180;
+  const linkRedeSocial = perfilGuardiao?.redesSociais ? montarLinkRedeSocial(perfilGuardiao.redesSociais) : null;
+  const membroDesdeTexto = perfilGuardiao?.membroDesde
+    ? new Date(perfilGuardiao.membroDesde).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
+    : null;
 
   const favorite = isFavorite(pet.id);
   const guardianPhoneDigits = pet.guardianPhone.replace(/\D/g, "");
@@ -274,6 +303,25 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
               {pet.temperamentDescription}
             </p>
 
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="rounded-2xl border border-border bg-secondary/40 p-3 text-xs">
+                <span className="font-semibold text-foreground">Nível de energia</span>
+                <p className="mt-1 text-muted-foreground">{{ calm: "Calmo", moderate: "Moderado", high: "Alto" }[pet.energyLevel]}</p>
+              </div>
+              {[
+                ["Crianças", pet.compatibleWithChildren],
+                ["Cães", pet.compatibleWithDogs],
+                ["Gatos", pet.compatibleWithCats]
+              ].map(([rotulo, compatibilidade]) => (
+                <div key={rotulo} className="rounded-2xl border border-border bg-secondary/40 p-3 text-xs">
+                  <span className="font-semibold text-foreground">Convivência com {rotulo.toLocaleLowerCase("pt-BR")}</span>
+                  <p className="mt-1 text-muted-foreground">
+                    {{ yes: "Boa convivência observada", no: "Não recomendada", unknown: "Ainda não avaliada" }[compatibilidade]}
+                  </p>
+                </div>
+              ))}
+            </div>
+
             <div className="pt-2">
               <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block mb-2">
                 Traços Marcantes:
@@ -321,28 +369,99 @@ export function PetDetailView({ pet }: PetDetailViewProps) {
         <div className="lg:col-span-5 space-y-6">
           <div className="p-4 sm:p-6 md:p-8 rounded-3xl bg-secondary/30 border border-border/60 shadow-sm space-y-4 sm:space-y-5">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-bold text-lg">
-                <Building2 className="w-6 h-6" />
-              </div>
-              <div>
+              <Avatar className="w-12 h-12 rounded-2xl after:rounded-2xl shrink-0">
+                {perfilGuardiao?.avatar && (
+                  <AvatarImage src={perfilGuardiao.avatar} alt={`Logo de ${pet.guardianName}`} className="rounded-2xl" />
+                )}
+                <AvatarFallback className="rounded-2xl bg-primary/10 text-primary">
+                  <Building2 className="w-6 h-6" />
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
                   {pet.guardianType === "ngo" ? "ONG responsável" : "Protetor independente"}
                 </span>
-                <h4 className="font-bold text-lg text-foreground leading-tight">
+                <h4 className="font-bold text-lg text-foreground leading-tight break-words">
                   {pet.guardianName}
                 </h4>
+                {perfilGuardiao?.verificado && (
+                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                    <ShieldCheck className="w-3.5 h-3.5" /> Responsável verificado
+                  </span>
+                )}
               </div>
             </div>
 
-            <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-              Este responsável publicou o animal e recebe as candidaturas enviadas pela plataforma para análise e contato.
-            </p>
+            {/* História / missão cadastrada no perfil do responsável */}
+            {apresentacaoGuardiao ? (
+              <div className="space-y-2">
+                <h5 className="text-xs font-bold text-foreground">
+                  {pet.guardianType === "ngo" ? "Nossa história e missão" : "Sobre o protetor"}
+                </h5>
+                <p
+                  className={`text-xs sm:text-sm text-muted-foreground leading-relaxed whitespace-pre-line break-words ${
+                    apresentacaoLonga && !apresentacaoExpandida ? "line-clamp-4" : ""
+                  }`}
+                >
+                  {apresentacaoGuardiao}
+                </p>
+                {apresentacaoLonga && (
+                  <button
+                    type="button"
+                    onClick={() => setApresentacaoExpandida((valorAtual) => !valorAtual)}
+                    aria-expanded={apresentacaoExpandida}
+                    className="min-h-[44px] -my-2 text-xs font-semibold text-primary hover:underline"
+                  >
+                    {apresentacaoExpandida ? "Ler menos" : "Ler mais"}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                Este responsável publicou o animal e recebe as candidaturas enviadas pela plataforma para análise e contato.
+              </p>
+            )}
+
+            {perfilGuardiao && (membroDesdeTexto || perfilGuardiao.totalAnimaisDisponiveis > 0) && (
+              <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-foreground">
+                {membroDesdeTexto && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-secondary">
+                    <CalendarHeart className="w-3.5 h-3.5 text-primary" /> Na plataforma desde {membroDesdeTexto}
+                  </span>
+                )}
+                {perfilGuardiao.totalAnimaisDisponiveis > 0 && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-secondary">
+                    <PawPrint className="w-3.5 h-3.5 text-primary" />
+                    {perfilGuardiao.totalAnimaisDisponiveis === 1
+                      ? "1 animal disponível"
+                      : `${perfilGuardiao.totalAnimaisDisponiveis} animais disponíveis`}
+                  </span>
+                )}
+              </div>
+            )}
 
             <div className="space-y-2 pt-2 border-t border-border/50 text-xs">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <MapPin className="w-4 h-4 text-primary shrink-0" />
                 <span>{[pet.location.city, pet.location.state].filter(Boolean).join(", ") || "Localização não informada"}</span>
               </div>
+              {perfilGuardiao?.redesSociais && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Globe className="w-4 h-4 text-primary shrink-0" />
+                  {linkRedeSocial ? (
+                    <a
+                      href={linkRedeSocial}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="break-all min-h-[44px] inline-flex items-center hover:text-primary hover:underline"
+                    >
+                      {perfilGuardiao.redesSociais}
+                    </a>
+                  ) : (
+                    <span className="break-all">{perfilGuardiao.redesSociais}</span>
+                  )}
+                </div>
+              )}
               {pet.guardianEmail && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Mail className="w-4 h-4 text-primary shrink-0" />

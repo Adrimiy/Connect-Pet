@@ -70,10 +70,12 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
     allergyCases: false,
     allergyDetails: "",
     hoursAlone: 4,
+    dailyCarePlan: "",
     travelCarePlan: "",
 
     // Step 4: Pets & Finances
     hasCurrentPets: false,
+    currentPetsDescription: "",
     previousPetsHistory: "",
     costAwareness: false,
   });
@@ -175,6 +177,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
         setValidationError("Por favor, detalhe como a alergia é controlada e como será o manejo com o animal.");
         return;
       }
+      if (formData.dailyCarePlan.trim().length < 20) {
+        setValidationError("Explique brevemente quem assumirá os cuidados diários e como eles entrarão na rotina da casa.");
+        return;
+      }
       setStep(4);
       return;
     }
@@ -187,6 +193,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
       }
       if (!formData.costAwareness) {
         setValidationError("Você deve confirmar a ciência sobre os custos contínuos e veterinários do animal.");
+        return;
+      }
+      if (formData.hasCurrentPets && formData.currentPetsDescription.trim().length < 10) {
+        setValidationError("Descreva brevemente os animais que já vivem na residência e como será feita a apresentação.");
         return;
       }
 
@@ -222,8 +232,10 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
         allergyCases: formData.allergyCases,
         allergyDetails: formData.allergyDetails,
         hoursAlone: Number(formData.hoursAlone),
+        dailyCarePlan: formData.dailyCarePlan.trim(),
         travelCarePlan: formData.travelCarePlan,
         hasCurrentPets: formData.hasCurrentPets,
+        currentPetsDescription: formData.currentPetsDescription.trim(),
         previousPetsHistory: formData.previousPetsHistory,
         costAwareness: formData.costAwareness
       };
@@ -703,6 +715,18 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
               </div>
 
               <div className="space-y-1.5">
+                <label className="text-xs font-bold text-foreground">Responsabilidade pelos cuidados diários *</label>
+                <textarea
+                  rows={2}
+                  maxLength={500}
+                  value={formData.dailyCarePlan}
+                  onChange={(e) => setFormData({ ...formData, dailyCarePlan: e.target.value })}
+                  placeholder="Quem ficará responsável por alimentação, higiene, passeios e consultas? Como isso entra na rotina?"
+                  className="min-h-[88px] w-full rounded-xl border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold text-foreground">
                   Plano para Férias e Viagens:
                 </label>
@@ -738,6 +762,16 @@ export function PreAdoptionModal({ pet, isOpen, onClose }: PreAdoptionModalProps
                     className="h-4 w-4 shrink-0 rounded text-primary accent-primary"
                   />
                 </label>
+                {formData.hasCurrentPets && (
+                  <textarea
+                    rows={3}
+                    maxLength={500}
+                    value={formData.currentPetsDescription}
+                    onChange={(e) => setFormData({ ...formData, currentPetsDescription: e.target.value })}
+                    placeholder="Informe espécies, idades, temperamentos e como pretende fazer a apresentação ao novo pet."
+                    className="min-h-[100px] w-full rounded-xl border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                )}
               </div>
 
               <div className="space-y-1.5">

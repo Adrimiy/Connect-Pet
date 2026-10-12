@@ -165,6 +165,7 @@ function PainelDossie({
   aoSolicitarStatus,
   aoSalvarNotas,
   aoEnviarMensagem,
+  aoGerarAnaliseIa,
 }: {
   candidatura: PreAdoptionApplication;
   contexto: "desktop" | "movel";
@@ -172,11 +173,13 @@ function PainelDossie({
   aoSolicitarStatus: (status: ApplicationStatus) => void;
   aoSalvarNotas: (notas: string) => Promise<boolean>;
   aoEnviarMensagem: (mensagem: string) => Promise<boolean>;
+  aoGerarAnaliseIa: () => Promise<boolean>;
 }) {
   const [notas, setNotas] = useState(candidatura.guardianNotes || "");
   const [mensagem, setMensagem] = useState("");
   const [estaSalvandoNotas, setEstaSalvandoNotas] = useState(false);
   const [estaEnviandoMensagem, setEstaEnviandoMensagem] = useState(false);
+  const [estaGerandoAnalise, setEstaGerandoAnalise] = useState(false);
   const transicoes = obterTransicoesPermitidas(candidatura.status);
   const telefone = candidatura.candidate.primaryPhone?.replace(/\D/g, "");
 
@@ -192,6 +195,16 @@ function PainelDossie({
     setEstaEnviandoMensagem(true);
     if (await aoEnviarMensagem(mensagem)) setMensagem("");
     setEstaEnviandoMensagem(false);
+  };
+
+  const gerarAnaliseIa = async () => {
+    if (estaGerandoAnalise) return;
+    setEstaGerandoAnalise(true);
+    try {
+      await aoGerarAnaliseIa();
+    } finally {
+      setEstaGerandoAnalise(false);
+    }
   };
 
   return (
@@ -222,13 +235,25 @@ function PainelDossie({
         <section className="space-y-3 rounded-2xl border border-border/70 bg-muted/35 p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="flex items-center gap-2 text-sm font-bold text-foreground">
-              <Sparkles className="h-4 w-4 text-primary" /> Pontos para revisão humana
+              <Sparkles className="h-4 w-4 text-primary" /> Análise de apoio à triagem
             </h3>
-            <Badge variant="outline">Referência: {candidatura.automatedAnalysis.suitabilityScore}/100</Badge>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">Referência: {candidatura.automatedAnalysis.suitabilityScore}/100</Badge>
+              <Badge variant={candidatura.automatedAnalysis.origem === "ia" ? "secondary" : "outline"}>
+                {candidatura.automatedAnalysis.origem === "ia" ? "Contextualizada por IA" : "Análise local"}
+              </Badge>
+            </div>
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Esta análise organiza respostas do formulário. Ela não aprova nem rejeita a candidatura e deve ser confirmada em entrevista.
+            O índice de triagem é uma heurística calculada por critérios fixos e auditáveis. A IA apenas contextualiza as respostas, não altera o índice, não aprova nem rejeita a candidatura e não substitui a entrevista.
           </p>
+          {candidatura.automatedAnalysis.resumo && (
+            <div className="space-y-1 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs">
+              <p className="font-bold text-foreground">{candidatura.automatedAnalysis.verdict}</p>
+              <p className="leading-relaxed text-muted-foreground">{candidatura.automatedAnalysis.resumo}</p>
+              {candidatura.automatedAnalysis.justificativa && <p className="leading-relaxed text-muted-foreground">{candidatura.automatedAnalysis.justificativa}</p>}
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-4 text-xs md:grid-cols-2">
             <div>
               <h4 className="mb-2 font-bold text-foreground">Pontos favoráveis</h4>
@@ -255,6 +280,40 @@ function PainelDossie({
               </ul>
             </div>
           )}
+          {candidatura.automatedAnalysis.fatores && candidatura.automatedAnalysis.fatores.length > 0 && (
+            <details className="rounded-xl border border-border/60 bg-background/70 text-xs">
+              <summary className="min-h-[44px] cursor-pointer px-3 py-3 font-bold text-foreground">Como a pontuação foi calculada</summary>
+              <ul className="space-y-2 border-t border-border/60 p-3 text-muted-foreground">
+                {candidatura.automatedAnalysis.fatores.map((fator, indice) => (
+                  <li key={`${fator.criterio}-${indice}`} className="flex items-start justify-between gap-3">
+                    <span><strong className="text-foreground">{fator.criterio}:</strong> {fator.explicacao}</span>
+                    <Badge variant="outline" className="shrink-0">{fator.impacto > 0 ? `+${fator.impacto}` : fator.impacto}</Badge>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <div className="flex flex-col gap-2 border-t border-border/60 pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[11px] text-muted-foreground">
+              {candidatura.automatedAnalysis.geradoEm
+                ? `Atualizada em ${new Date(candidatura.automatedAnalysis.geradoEm).toLocaleString("pt-BR")}`
+                : "Análise inicial gerada no envio da candidatura."}
+              {candidatura.automatedAnalysis.origem === "ia" && candidatura.automatedAnalysis.provedor
+                ? ` · ${candidatura.automatedAnalysis.provedor}${candidatura.automatedAnalysis.modelo ? ` (${candidatura.automatedAnalysis.modelo})` : ""}`
+                : ""}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={estaGerandoAnalise}
+              onClick={() => void gerarAnaliseIa()}
+              className="min-h-[44px] w-full rounded-full sm:w-auto"
+            >
+              {estaGerandoAnalise ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {estaGerandoAnalise ? "Analisando respostas" : candidatura.automatedAnalysis.origem === "ia" ? "Atualizar análise com IA" : "Analisar com IA"}
+            </Button>
+          </div>
         </section>
       )}
 
@@ -275,6 +334,8 @@ function PainelDossie({
           {candidatura.protectionDetails && <p className="text-muted-foreground">{candidatura.protectionDetails}</p>}
           <p><strong>Família:</strong> {candidatura.adultsCount} adulto(s) e {candidatura.childrenCount} criança(s)</p>
           <p><strong>Tempo sozinho:</strong> {candidatura.hoursAlone} hora(s) por dia</p>
+          <p><strong>Cuidados diários:</strong> {candidatura.dailyCarePlan || "Não detalhado"}</p>
+          <p><strong>Animais residentes:</strong> {candidatura.hasCurrentPets ? candidatura.currentPetsDescription || "Informados sem detalhes" : "Não possui"}</p>
           <p><strong>Plano para viagens:</strong> {candidatura.travelCarePlan || "Não informado"}</p>
         </section>
       </div>
@@ -357,6 +418,7 @@ export function GuardianDashboardView() {
     updateApplicationStatus,
     updateGuardianNotes,
     sendApplicationMessage,
+    generateApplicationAIAnalysis,
   } = useApp();
   const router = useRouter();
   const pathname = usePathname();
@@ -492,6 +554,7 @@ export function GuardianDashboardView() {
       aoSolicitarStatus={(status) => setAlteracaoStatus({ candidatura, status })}
       aoSalvarNotas={(notas) => updateGuardianNotes(candidatura.id, notas)}
       aoEnviarMensagem={(mensagem) => sendApplicationMessage(candidatura.id, mensagem)}
+      aoGerarAnaliseIa={() => generateApplicationAIAnalysis(candidatura.id)}
     />
   );
 
